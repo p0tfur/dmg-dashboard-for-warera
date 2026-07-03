@@ -3,62 +3,41 @@ name: Build & Deploy
 on:
   push:
     branches: [master]
-  workflow_dispatch: # manual trigger from GitHub
-
-env:
-  REGISTRY: ghcr.io
+  workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Image name (lowercase)
-        id: image
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push
-        uses: docker/build-push-action@v6
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
+          file: Dockerfile
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ github.sha }}
+          tags: ghcr.io/p0tfur/warera:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Resolve webhook URL
-        id: webhook
+      - name: Trigger Coolify deployment
+        if: github.ref == 'refs/heads/master'
         run: |
-          URL="${{ vars.COOLIFY_WEBHOOK_URL || secrets.COOLIFY_WEBHOOK_URL }}"
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
-          if [ -z "$URL" ]; then
-            echo "::warning::Add COOLIFY_WEBHOOK_URL as a repository Variable (Settings → Secrets and variables → Actions → Variables) or Secret to auto-deploy. Image is already in GHCR and ready for manual deploy."
-          else
-            echo "Webhook URL found, triggering deploy..."
+          if [ -z "${{ secrets.COOLIFY_WEBHOOK }}" ] || [ -z "${{ secrets.COOLIFY_TOKEN_DMGWARERA }}" ]; then
+            echo "Missing COOLIFY_WEBHOOK or COOLIFY_TOKEN_DMGWARERA secret" >&2
+            exit 1
           fi
-
-      - name: Trigger deploy in Coolify
-        if: ${{ steps.webhook.outputs.url != '' }}
-        run: |
-          curl -fsS -X POST "${{ steps.webhook.outputs.url }}" \
-            -H "Content-Type: application/json" \
-            | tee /tmp/curl.out
+          curl --fail --show-error --silent --request GET "${{ secrets.COOLIFY_WEBHOOK }}" \
+            --header "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN_DMGWARERA }}"
