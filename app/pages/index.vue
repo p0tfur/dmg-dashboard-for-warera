@@ -47,29 +47,29 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
           <div class="min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <h2 class="heading-display text-xl sm:text-2xl text-zinc-100">{{ fed?.allianceName ?? 'The Federation' }}</h2>
-              <span class="chip border-fed/30 bg-fed/10 text-fed-glow">Sojusz</span>
+              <span class="chip border-fed/30 bg-fed/10 text-fed-glow">Alliance</span>
               <span v-if="fed?.globalRank" class="chip border-white/10 bg-white/5 text-zinc-400">
-                <Trophy class="h-3 w-3 text-fed" /> #{{ fed.globalRank }} globalnie
+                <Trophy class="h-3 w-3 text-fed" /> #{{ fed.globalRank }} global
               </span>
             </div>
             <p class="text-xs text-zinc-500 mt-0.5">
-              Obrażenia {{ PERIOD_LABEL[fedPeriod] }} ·
-              <span class="data-mono">{{ fed ? formatFull(fed.totalDamage) : '…' }}</span> łącznie
+              Damage {{ PERIOD_LABEL[fedPeriod] }} ·
+              <span class="data-mono">{{ fed ? formatFull(fed.totalDamage) : '…' }}</span> total
             </p>
           </div>
         </div>
 
         <!-- Error -->
         <div v-if="fedErr" class="panel clip-corner p-4 mb-4 border-danger/30">
-          <p class="text-sm text-danger">Błąd ładowania sojuszu: {{ fedErr.statusMessage || fedErr.message }}</p>
+          <p class="text-sm text-danger">Failed to load alliance: {{ fedErr.statusMessage || fedErr.message }}</p>
         </div>
 
         <!-- KPIs -->
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <KpiCard label="Suma DMG" :value="fed?.totalDamage" :icon="Swords" accent="fed" :loading="fedLoading" />
-          <KpiCard label="Kraje członkowskie" :value="fed?.memberCountryCount" :icon="Globe2" accent="fed" :loading="fedLoading" />
+          <KpiCard label="Total DMG" :value="fed?.totalDamage" :icon="Swords" accent="fed" :loading="fedLoading" />
+          <KpiCard label="Member Countries" :value="fed?.memberCountryCount" :icon="Globe2" accent="fed" :loading="fedLoading" />
           <KpiCard label="Military Units" :value="fed?.muCount" :icon="Layers" accent="fed" :loading="fedLoading" />
-          <KpiCard label="Rank globalny" :value="fed?.globalRank" :icon="Trophy" accent="fed" :loading="fedLoading" />
+          <KpiCard label="Global Rank" :value="fed?.globalRank" :icon="Trophy" accent="fed" :loading="fedLoading" />
         </div>
 
         <!-- Tables -->
@@ -77,7 +77,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
           <div class="panel clip-corner panel-glow-fed">
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
               <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
-                <Globe2 class="h-4 w-4 text-fed" /> DMG per kraj
+                <Globe2 class="h-4 w-4 text-fed" /> DMG per country
               </h3>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
@@ -122,32 +122,32 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <h2 class="heading-display text-xl sm:text-2xl text-zinc-100">{{ jus?.muName ?? 'Justice' }}</h2>
               <span class="chip border-just/30 bg-just/10 text-just-glow">Military Unit</span>
               <span v-if="jus?.globalRank" class="chip border-white/10 bg-white/5 text-zinc-400">
-                <Trophy class="h-3 w-3 text-just" /> #{{ jus.globalRank }} globalnie
+                <Trophy class="h-3 w-3 text-just" /> #{{ jus.globalRank }} global
               </span>
             </div>
             <p class="text-xs text-zinc-500 mt-0.5">
-              Obrażenia {{ PERIOD_LABEL[period] }} ·
-              <span class="data-mono">{{ jus ? formatFull(jus.totalDamage) : '…' }}</span> łącznie
+              Damage {{ PERIOD_LABEL[period] }} ·
+              <span class="data-mono">{{ jus ? formatFull(jus.totalDamage) : '…' }}</span> total
             </p>
           </div>
         </div>
 
         <div v-if="jusErr" class="panel clip-corner p-4 mb-4 border-danger/30">
-          <p class="text-sm text-danger">Błąd ładowania MU: {{ jusErr.statusMessage || jusErr.message }}</p>
+          <p class="text-sm text-danger">Failed to load MU: {{ jusErr.statusMessage || jusErr.message }}</p>
         </div>
 
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <KpiCard label="Suma DMG" :value="jus?.totalDamage" :icon="Swords" accent="just" :loading="jusLoading" />
-          <KpiCard label="Członkowie" :value="jus?.memberCount" :icon="Users" accent="just" :loading="jusLoading" />
-          <KpiCard label="Poziom MU" :value="jus?.level" :icon="Activity" accent="just" :loading="jusLoading" />
-          <KpiCard label="Rank globalny" :value="jus?.globalRank" :icon="Trophy" accent="just" :loading="jusLoading" />
+          <KpiCard label="Total DMG" :value="jus?.totalDamage" :icon="Swords" accent="just" :loading="jusLoading" />
+          <KpiCard label="Members" :value="jus?.memberCount" :icon="Users" accent="just" :loading="jusLoading" />
+          <KpiCard label="MU Level" :value="jus?.level" :icon="Activity" accent="just" :loading="jusLoading" />
+          <KpiCard label="Global Rank" :value="jus?.globalRank" :icon="Trophy" accent="just" :loading="jusLoading" />
         </div>
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
           <div class="panel clip-corner panel-glow-just">
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
               <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
-                <Globe2 class="h-4 w-4 text-just" /> DMG per kraj
+                <Globe2 class="h-4 w-4 text-just" /> DMG per country
               </h3>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[period] }}</span>
             </div>
@@ -159,7 +159,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
           <div class="panel clip-corner panel-glow-just">
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
               <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
-                <Users class="h-4 w-4 text-just" /> DMG per gracz
+                <Users class="h-4 w-4 text-just" /> DMG per player
               </h3>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[period] }}</span>
             </div>
@@ -171,7 +171,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
       </section>
 
       <footer class="pt-4 pb-8 text-center text-[11px] text-zinc-600">
-        Dane: <span class="data-mono">api2.warera.io</span> · odświeżanie co 60 s ·
+        Data: <span class="data-mono">api2.warera.io</span> · auto-refresh 60 s ·
         <span v-if="fed?.fromCache || jus?.fromCache">cache</span><span v-else>live</span>
       </footer>
     </main>

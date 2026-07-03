@@ -37,7 +37,7 @@ const rlColor = computed(() => {
 const fmtTime = (iso: string | null) => {
   if (!iso) return '—'
   const d = new Date(iso)
-  return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 </script>
 
@@ -95,7 +95,7 @@ const fmtTime = (iso: string | null) => {
         <button
           class="grid place-items-center h-8 w-8 rounded-sm border border-white/5 bg-base-800/60 text-zinc-400 hover:text-zinc-100 hover:border-white/10 transition-colors"
           :disabled="loading"
-          title="Odśwież teraz"
+          title="Refresh now"
           @click="emit('refresh')"
         >
           <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />

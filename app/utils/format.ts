@@ -1,6 +1,6 @@
-// Formatowanie liczb, dat i flag
+// Number, date and flag formatting helpers
 
-/** Formatuje obrażenia w notacji skróconej: 1.23M, 45.6K, 789. */
+/** Formats damage in short notation: 1.23M, 45.6K, 789. */
 export function formatDamage(n: number | null | undefined): string {
   if (n == null || !isFinite(n)) return '—'
   if (n === 0) return '0'
@@ -11,13 +11,13 @@ export function formatDamage(n: number | null | undefined): string {
   return Math.round(n).toString()
 }
 
-/** Pełna liczba z separatorami tysięcy. */
+/** Full number with thousands separators. */
 export function formatFull(n: number | null | undefined): string {
   if (n == null || !isFinite(n)) return '—'
   return Math.round(n).toLocaleString('en-US')
 }
 
-/** 2-litery kod kraju (np. "bg") → emoji flagi. */
+/** 2-letter country code (e.g. "bg") → flag emoji. */
 export function flagEmoji(code: string | null | undefined): string {
   if (!code || code.length !== 2) return ''
   const cc = code.toUpperCase()
@@ -26,16 +26,16 @@ export function flagEmoji(code: string | null | undefined): string {
   return String.fromCodePoint(A + (cc.charCodeAt(0) - 65), A + (cc.charCodeAt(1) - 65))
 }
 
-/** Czas HH:MM:SS dla timestampa ISO. */
+/** HH:MM:SS time from an ISO timestamp. */
 export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   if (isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 export const PERIOD_LABEL: Record<string, string> = {
-  week: 'Ten tydzień',
-  month: 'Ten miesiąc',
-  all: 'Cały czas',
+  week: 'This week',
+  month: 'This month',
+  all: 'All time',
 }

@@ -1,12 +1,12 @@
 import { ofetch, type FetchOptions } from 'ofetch'
 
 /**
- * Minimalny klient WarEra tRPC (HTTP GET).
- * Replikuje istotne fragmenty logiki klienta Python `warera`:
+ * Minimal WarEra tRPC client (HTTP GET).
+ * Replicates key logic from the Python `warera` client:
  *   • GET /trpc/{proc}?input={"0":{"json":{...}}}&batch=1
- *   • opcjonalny nagłówek X-API-Key (tylko serwer)
- *   • odczyt nagłówków ratelimit-* i adaptacyjne czekanie
- *   • retry z exponential backoff dla 429 / 5xx
+ *   • optional X-API-Key header (server only)
+ *   • reads ratelimit-* headers and adapts wait time
+ *   • retry with exponential backoff for 429 / 5xx
  */
 
 const RETRYABLE = new Set([408, 409, 425, 429, 500, 502, 503, 504])
@@ -17,7 +17,7 @@ interface RateLimitState {
   resetAt: number | null // epoch ms
 }
 
-// Stan rate-limitu współdzielony w obrębie procesu serwera.
+// Rate-limit state shared across the server process.
 const rl: RateLimitState = { remaining: null, limit: null, resetAt: null }
 
 export function getRateLimitState(): {
@@ -41,7 +41,7 @@ function getBaseUrl(): string {
   return (config.wareraBaseUrl as string) || 'https://api2.warera.io/trpc'
 }
 
-/** Buduje URL żądania tRPC (pojedynczy GET; args bezpośrednio w input). */
+/** Builds the tRPC request URL (single GET; args passed directly in input). */
 function buildUrl(procedure: string, args: Record<string, unknown>): string {
   const base = getBaseUrl().replace(/\/$/, '')
   const input = JSON.stringify(args)
@@ -50,9 +50,9 @@ function buildUrl(procedure: string, args: Record<string, unknown>): string {
 }
 
 /**
- * Rozpakowuje odpowiedź tRPC.
+ * Unwraps the tRPC response.
  * Standard: { result: { data: { json: <payload> } } }
- * Obsługujemy też warianty bez podwójnego zagnieżdżenia oraz przekaź surowy payload.
+ * Also handles variants without double nesting and raw payload passthrough.
  */
 function unwrap(data: any): any {
   if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -78,7 +78,7 @@ function updateRateLimit(headers: Headers) {
   if (reset !== null) rl.resetAt = Date.now() + Number(reset) * 1000
 }
 
-/** Czeka, jeśli okienko rate-limitu jest wyczerpane. */
+/** Waits if the rate-limit window is exhausted. */
 async function waitIfExhausted() {
   if (rl.remaining !== null && rl.remaining <= 0 && rl.resetAt) {
     const wait = rl.resetAt - Date.now()

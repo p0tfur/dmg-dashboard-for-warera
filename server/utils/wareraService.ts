@@ -8,7 +8,7 @@ import type {
   PlayerRow,
 } from '~~/shared/types/warera'
 
-// Nazwy encji docelowych (można nadpisać przez env).
+// Target entity names (can be overridden via env).
 const FEDERATION_NAME = (process.env.WARERA_ALLIANCE_NAME as string) || 'The Federation'
 const JUSTICE_NAME = (process.env.WARERA_NAME as string) || 'Justice'
 const FEDERATION_ID = process.env.WARERA_ALLIANCE_ID as string | undefined
@@ -36,15 +36,15 @@ async function swr<T>(
   return { data, fromCache: false }
 }
 
-// ---------------- Pomocnicze ----------------
+// ---------------- Helpers ----------------
 
-/** Wyciąga tablicę z odpowiedzi: array | {items} | {data} | {<pierwszy-klucz>: array}. */
+/** Extracts an array from a response: array | {items} | {data} | {<first-key>: array}. */
 function asArray<T = any>(raw: any): T[] {
   if (Array.isArray(raw)) return raw as T[]
   if (raw && typeof raw === 'object') {
     if (Array.isArray(raw.items)) return raw.items as T[]
     if (Array.isArray(raw.data)) return raw.data as T[]
-    // np. ranking zwraca {[rankingType]: [...], tierValues: {...}}
+    // e.g. ranking returns {[rankingType]: [...], tierValues: {...}}
     for (const v of Object.values(raw)) {
       if (Array.isArray(v)) return v as T[]
     }
@@ -66,7 +66,7 @@ function finalizeRows(rows: DamageRow[]): DamageRow[] {
   return rows
 }
 
-// ---------------- Encje bazowe (cache długoterminowy) ----------------
+// ---------------- Base entities (long-term cache) ----------------
 
 interface CountryInfo {
   name: string
@@ -139,7 +139,7 @@ interface MuInfo {
   level: number | null
 }
 
-/** Paginuje mu.getManyPaginated aż do wyczerpania (cache 5 min). */
+/** Paginates mu.getManyPaginated until exhausted (cache 5 min). */
 async function getAllMus(): Promise<MuInfo[]> {
   const { data } = await swr('mus:all', 5 * 60 * 1000, async () => {
     const out: MuInfo[] = []
@@ -256,7 +256,7 @@ async function getUserProfile(userId: string): Promise<UserProfile> {
   }
 }
 
-// ---------------- Rozwiązywanie ID ----------------
+// ---------------- ID resolution ----------------
 
 async function resolveAllianceId(): Promise<string | null> {
   if (FEDERATION_ID) return FEDERATION_ID
@@ -285,7 +285,7 @@ export async function getFederationData(period: Period): Promise<FederationRespo
   if (!allianceId) {
     throw createError({
       statusCode: 404,
-      statusMessage: `Nie znaleziono sojuszu „${FEDERATION_NAME}"`,
+      statusMessage: `Alliance "${FEDERATION_NAME}" not found`,
     })
   }
 
@@ -299,7 +299,7 @@ export async function getFederationData(period: Period): Promise<FederationRespo
 
     const memberSet = new Set(alliance.memberCountryIds)
 
-    // per kraj
+    // per country
     const byCountry: DamageRow[] = []
     for (const cid of alliance.memberCountryIds) {
       const c = countries.get(cid)
@@ -316,7 +316,7 @@ export async function getFederationData(period: Period): Promise<FederationRespo
     }
     finalizeRows(byCountry)
 
-    // per MU (kraje sojuszu)
+    // per MU (alliance countries)
     const byMu: DamageRow[] = []
     for (const mu of allMus) {
       if (!mu.country || !memberSet.has(mu.country)) continue
@@ -369,7 +369,7 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
   if (!muId) {
     throw createError({
       statusCode: 404,
-      statusMessage: `Nie znaleziono military unit „${JUSTICE_NAME}"`,
+      statusMessage: `Military Unit "${JUSTICE_NAME}" not found`,
     })
   }
 
@@ -381,12 +381,12 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
       getCountries(),
     ])
 
-    // profile członków (nazwa, awatar, obywatelstwo)
+    // member profiles (name, avatar, citizenship)
     const profiles = await Promise.all(
       members.map((m) => getUserProfile(m.user)),
     )
 
-    // per gracz
+    // per player
     const players: PlayerRow[] = members.map((m, i) => {
       const p = profiles[i]
       const damage =
@@ -408,7 +408,7 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
     players.sort((a, b) => b.damage - a.damage)
     players.forEach((p, i) => (p.rank = i + 1))
 
-    // per kraj (agregacja wg obywatelstwa)
+    // per country (aggregated by citizenship)
     const countryAgg = new Map<string, number>()
     for (const p of players) {
       if (!p.countryId || p.damage <= 0) continue
@@ -466,5 +466,5 @@ export async function getMeta(): Promise<MetaResponse> {
   }
 }
 
-// eksport pomocniczy dla potencjalnych testów
+// helper export for potential tests
 export const __test = { rankValue, asArray }

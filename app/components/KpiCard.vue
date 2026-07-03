@@ -14,7 +14,7 @@ const props = withDefaults(
   { accent: 'fed', loading: false },
 )
 
-// animacja count-up (tylko po stronie klienta — rAF nie istnieje w SSR)
+// count-up animation (client-side only — rAF doesn't exist in SSR)
 const display = ref(props.value ?? 0)
 let raf = 0
 function animate(to: number) {

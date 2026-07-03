@@ -11,11 +11,11 @@ export default defineNuxtConfig({
   app: {
     head: {
       title: 'WarEra DMG Command Center',
-      htmlAttrs: { lang: 'pl' },
+      htmlAttrs: { lang: 'en' },
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'description', content: 'Statystyki obrażeń (DMG) WarEra — The Federation & Justice' },
+        { name: 'description', content: 'WarEra DMG stats — The Federation & Justice' },
       ],
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },

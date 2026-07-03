@@ -36,14 +36,14 @@ const rankText = computed(() => (props.accent === 'fed' ? 'text-fed/70' : 'text-
         <tr class="text-left text-[10px] uppercase tracking-[0.16em] text-zinc-500">
           <th class="py-2 pr-2 w-8 text-right font-semibold">#</th>
           <th v-if="showFlag || avatarKey" class="py-2 pr-2 w-10 font-semibold" />
-          <th class="py-2 pr-2 font-semibold">Nazwa</th>
+          <th class="py-2 pr-2 font-semibold">Name</th>
           <th
             class="py-2 px-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
             @click="sortDesc = !sortDesc"
           >
             DMG <span class="opacity-50">↕</span>
           </th>
-          <th class="py-2 pl-2 w-24 text-right font-semibold">Udział</th>
+          <th class="py-2 pl-2 w-24 text-right font-semibold">Share</th>
         </tr>
       </thead>
       <tbody>
@@ -117,7 +117,7 @@ const rankText = computed(() => (props.accent === 'fed' ? 'text-fed/70' : 'text-
 
         <tr v-if="!loading && sorted.length === 0">
           <td :colspan="5" class="py-8 text-center text-zinc-600 text-sm">
-            Brak danych o obrażeniach w tym okresie.
+            No damage data for this period.
           </td>
         </tr>
       </tbody>

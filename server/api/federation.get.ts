@@ -5,9 +5,9 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const period = (query.period as Period) || 'week'
   if (!['week', 'all'].includes(period)) {
-    throw createError({ statusCode: 400, statusMessage: 'Nieprawidłowy period (week|all)' })
+    throw createError({ statusCode: 400, statusMessage: 'Invalid period (week|all)', })
   }
-  // Krótki cache HTTP dla CDN/przeglądarki (dane i tak trzymają SWR na serwerze).
+  // Short HTTP cache for CDN/browser (data is already held by SWR on the server).
   setHeader(event, 'Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
   return getFederationData(period)
 })

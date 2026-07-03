@@ -1,17 +1,17 @@
-// Współdzielone typy WarEra (frontend + serwer)
+// Shared WarEra types (frontend + server)
 
 export type Period = 'week' | 'month' | 'all'
 
-/** Pojedynczy rekord zwracany przez ranking.getRanking / battleRanking.getRanking. */
+/** Single record returned by ranking.getRanking / battleRanking.getRanking. */
 export interface RankingEntry {
   rank?: number | null
-  // API używa różnych kluczy w zależności od typu: user | country | mu | entityId
+  // API uses different keys depending on type: user | country | mu | entityId
   user?: string | null
   country?: string | null
   mu?: string | null
   entityId?: string | null
   name?: string | null
-  // obywatelstwo (user) lub kraj macierzysty (MU)
+  // citizenship (user) or home country (MU)
   countryId?: string | null
   value?: number | null
   tier?: string | null
@@ -21,7 +21,7 @@ export interface RankingEntry {
   [key: string]: unknown
 }
 
-/** Członek MU z obrażeniami (muMember.getByMu). */
+/** MU member with damage stats (muMember.getByMu). */
 export interface MuMember {
   mu?: string | null
   user?: string | null
@@ -89,13 +89,13 @@ export interface SearchHit {
   [key: string]: unknown
 }
 
-// --- Kształt odpowiedzi API dla frontendu ---
+// --- API response shape for frontend ---
 
 export interface DamageRow {
   id: string
   name: string
   damage: number
-  share: number // 0..1 udział w sumie
+  share: number // 0..1 share of total
   rank?: number | null
   meta?: Record<string, string | number | null>
 }

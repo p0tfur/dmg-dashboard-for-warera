@@ -34,7 +34,7 @@ export function useDashboard() {
     lastUpdated.value = new Date().toISOString()
   }
 
-  // auto-refresh, gdy włączone „live"
+  // auto-refresh when "live" is enabled
   let timer: ReturnType<typeof setInterval> | null = null
   onMounted(() => {
     lastUpdated.value = new Date().toISOString()

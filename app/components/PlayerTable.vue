@@ -31,8 +31,8 @@ const maxDamage = computed(() =>
         <tr class="text-left text-[10px] uppercase tracking-[0.16em] text-zinc-500">
           <th class="py-2 pr-2 w-8 text-right font-semibold">#</th>
           <th class="py-2 pr-2 w-10 font-semibold" />
-          <th class="py-2 pr-2 font-semibold">Gracz</th>
-          <th class="py-2 px-2 font-semibold">Kraj</th>
+          <th class="py-2 pr-2 font-semibold">Player</th>
+          <th class="py-2 px-2 font-semibold">Country</th>
           <th
             class="py-2 px-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
             @click="sortDesc = !sortDesc"
@@ -99,7 +99,7 @@ const maxDamage = computed(() =>
 
         <tr v-if="!loading && sorted.length === 0">
           <td :colspan="showHelp ? 6 : 5" class="py-8 text-center text-zinc-600 text-sm">
-            Brak członków w tym okresie.
+            No members in this period.
           </td>
         </tr>
       </tbody>
