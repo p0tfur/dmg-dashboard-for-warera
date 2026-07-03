@@ -4,6 +4,9 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Wyłącz policy "minimum release age" — blokuje pakiety opublikowane <24h temu
+ENV PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
+
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
