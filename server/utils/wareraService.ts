@@ -12,7 +12,9 @@ import type {
 const FEDERATION_NAME = (process.env.WARERA_ALLIANCE_NAME as string) || 'The Federation'
 const JUSTICE_NAME = (process.env.WARERA_NAME as string) || 'Justice'
 const FEDERATION_ID = process.env.WARERA_ALLIANCE_ID as string | undefined
-const JUSTICE_ID = process.env.WARERA_MU_ID as string | undefined
+// Pinned: there are two MUs named "Justice" in the game, so name search would
+// resolve to the wrong one. Override with WARERA_MU_ID if this ever changes.
+const JUSTICE_ID = (process.env.WARERA_MU_ID as string | undefined) ?? '687633b772c4886cc6fa3d56'
 
 // ---------------- SWR cache (in-memory) ----------------
 interface CacheEntry<T> {
