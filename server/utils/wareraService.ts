@@ -16,10 +16,11 @@ const FEDERATION_ID = process.env.WARERA_ALLIANCE_ID as string | undefined
 // resolve to the wrong one. Override with WARERA_MU_ID if this ever changes.
 const JUSTICE_ID = (process.env.WARERA_MU_ID as string | undefined) ?? '687633b772c4886cc6fa3d56'
 // MUs to always include in the Federation "DMG per military unit" ranking even
-// if their founding country is not an alliance member (e.g. the other "Justice"
-// is registered under Sweden). Comma-separated IDs.
+// if their founding country is not an alliance member or pagination misses them.
+// Both "Justice" MUs: Sweden (the real one, 76.2M) + Philippines (the alt one).
 const FED_EXTRA_MU_IDS = new Set(
-  ((process.env.WARERA_FED_EXTRA_MU_IDS as string | undefined) ?? '698ca55790b70ac76de933c5')
+  ((process.env.WARERA_FED_EXTRA_MU_IDS as string | undefined) ||
+    '687633b772c4886cc6fa3d56,698ca55790b70ac76de933c5')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
@@ -183,6 +184,24 @@ async function getAllMus(): Promise<MuInfo[]> {
   return data
 }
 
+/** Fetches a single MU by ID (used as a fallback when pagination misses it). */
+async function getMuById(id: string): Promise<MuInfo | null> {
+  const { data } = await swr(`mu:info:${id}`, 60 * 1000, async () => {
+    const m = await trpcGet<any>('mu.getById', { muId: id })
+    if (!m?._id) return null
+    return {
+      id: m._id,
+      name: m.name ?? m._id,
+      country: m.country ?? null,
+      avatarUrl: m.avatarUrl ?? null,
+      weekly: Number(m?.rankings?.muWeeklyDamages?.value ?? 0),
+      total: Number(m?.rankings?.muDamages?.value ?? 0),
+      level: m?.leveling?.level ?? null,
+    }
+  })
+  return data
+}
+
 interface JusticeMu {
   id: string
   name: string
@@ -302,11 +321,19 @@ export async function getFederationData(period: Period): Promise<FederationRespo
 
   const cacheKey = `fed:${period}`
   const { data, fromCache } = await swr(cacheKey, 45 * 1000, async () => {
-    const [alliance, { byId: countries }, allMus] = await Promise.all([
+    const [alliance, { byId: countries }, allMusBase] = await Promise.all([
       getAlliance(allianceId),
       getCountries(),
       getAllMus(),
     ])
+
+    // Ensure force-included extra MUs are present even if pagination missed them
+    const haveIds = new Set(allMusBase.map((m) => m.id))
+    const missing = [...FED_EXTRA_MU_IDS].filter((id) => !haveIds.has(id))
+    const extra = (await Promise.all(missing.map((id) => getMuById(id)))).filter(
+      (m): m is MuInfo => !!m,
+    )
+    const allMus = extra.length ? [...allMusBase, ...extra] : allMusBase
 
     const memberSet = new Set(alliance.memberCountryIds)
 
