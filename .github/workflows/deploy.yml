@@ -19,14 +19,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Nazwa obrazu (lowercase)
+      - name: Image name (lowercase)
         id: image
         run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Logowanie do GHCR
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -45,16 +45,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trigger deploy w Coolify
-        if: ${{ vars.COOLIFY_WEBHOOK_URL != '' }}
+      - name: Resolve webhook URL
+        id: webhook
         run: |
-          echo "Wysyłam webhook do Coolify..."
-          curl -fsS -X POST "${{ vars.COOLIFY_WEBHOOK_URL }}" \
+          URL="${{ vars.COOLIFY_WEBHOOK_URL || secrets.COOLIFY_WEBHOOK_URL }}"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          if [ -z "$URL" ]; then
+            echo "::warning::Add COOLIFY_WEBHOOK_URL as a repository Variable (Settings → Secrets and variables → Actions → Variables) or Secret to auto-deploy. Image is already in GHCR and ready for manual deploy."
+          else
+            echo "Webhook URL found, triggering deploy..."
+          fi
+
+      - name: Trigger deploy in Coolify
+        if: ${{ steps.webhook.outputs.url != '' }}
+        run: |
+          curl -fsS -X POST "${{ steps.webhook.outputs.url }}" \
             -H "Content-Type: application/json" \
             | tee /tmp/curl.out
-        continue-on-error: false
-
-      - name: Brak webhooka — instrukcja
-        if: ${{ vars.COOLIFY_WEBHOOK_URL == '' }}
-        run: |
-          echo "::warning::Ustaw zmienną repozytorium COOLIFY_WEBHOOK_URL (Settings → Secrets and variables → Actions → Variables), aby automatycznie deployować do Coolify. Obraz jest już w GHCR i gotowy do ręcznego deploya."
