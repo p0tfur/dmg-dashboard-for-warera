@@ -2,12 +2,9 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.34.1 --activate
 
-# Wyłącz policy "minimum release age" — blokuje pakiety opublikowane <24h temu
-ENV PNPM_CONFIG_MINIMUM_RELEASE_AGE=0
-
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -17,11 +14,11 @@ RUN pnpm build
 FROM node:22-alpine AS runner
 WORKDIR /app
 
-# Non-root user dla bezpieczeństwa
+# Non-root user for security
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 --ingroup nodejs nuxt
 
-# Samo .output — Nuxt/Nitro bundle'uje wszystkie deps w środku
+# Only .output — Nuxt/Nitro bundles all deps inside
 COPY --from=builder --chown=nuxt:nodejs /app/.output ./.output
 
 USER nuxt

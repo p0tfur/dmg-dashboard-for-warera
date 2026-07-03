@@ -1,0 +1,10 @@
+# pnpm v10+ configuration (replaces the "pnpm" field in package.json)
+# Docs: https://pnpm.io/settings
+
+# Disable "freshly published" package block (defaults to 1 day in v11)
+minimumReleaseAge: 0
+
+# Allow build scripts only for these packages:
+onlyBuiltDependencies:
+  - esbuild
+  - "@parcel/watcher"

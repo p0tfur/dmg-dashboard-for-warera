@@ -2,6 +2,7 @@
   "name": "warera",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@10.34.1",
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
@@ -20,8 +21,5 @@
     "@types/node": "^26.1.0",
     "typescript": "^6.0.3",
     "vue-tsc": "^3.3.6"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@parcel/watcher"]
   }
 }

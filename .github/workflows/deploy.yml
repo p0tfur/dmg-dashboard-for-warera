@@ -3,7 +3,7 @@ name: Build & Deploy
 on:
   push:
     branches: [master]
-  workflow_dispatch: # ręczny trigger z GitHub
+  workflow_dispatch: # manual trigger from GitHub
 
 env:
   REGISTRY: ghcr.io
