@@ -43,9 +43,22 @@ async function swr<T>(
   if (hit && hit.expiry > now) {
     return { data: hit.data as T, fromCache: true }
   }
-  const data = await fn()
-  cache.set(key, { data, expiry: now + ttlMs })
-  return { data, fromCache: false }
+  // Cache is stale (or absent): try to revalidate.
+  try {
+    const data = await fn()
+    cache.set(key, { data, expiry: now + ttlMs })
+    return { data, fromCache: false }
+  } catch (err) {
+    // Stale-while-revalidate: serve the last-known value when upstream fails
+    // (e.g. transient 503). Only propagate the error if we have nothing cached.
+    if (hit) {
+      console.warn(
+        `[warera] revalidate "${key}" failed; serving stale cache (${(err as Error)?.message ?? err})`,
+      )
+      return { data: hit.data as T, fromCache: true }
+    }
+    throw err
+  }
 }
 
 // ---------------- Helpers ----------------
