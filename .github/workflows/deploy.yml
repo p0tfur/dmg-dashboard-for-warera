@@ -29,8 +29,6 @@ jobs:
           file: Dockerfile
           push: true
           tags: ghcr.io/p0tfur/warera:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Trigger Coolify deployment
         if: github.ref == 'refs/heads/master'
