@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-base-900 text-zinc-300 font-sans antialiased;
+    background-image:
+      radial-gradient(900px 500px at 12% -10%, rgba(245, 165, 36, 0.07), transparent 60%),
+      radial-gradient(900px 500px at 90% 0%, rgba(34, 211, 238, 0.06), transparent 60%),
+      theme('backgroundImage.grid');
+    background-size: auto, auto, 44px 44px;
+    background-attachment: fixed;
+  }
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0e1116;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2e3742;
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b4550;
+  }
+}
+
+@layer components {
+  /* Clipped, tactical card corners */
+  .clip-corner {
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  }
+  .clip-corner-sm {
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+  .panel {
+    @apply relative bg-base-850/80 border border-white/5 clip-corner backdrop-blur-sm;
+  }
+  .panel-glow-fed {
+    box-shadow: 0 0 0 1px rgba(245, 165, 36, 0.12), 0 0 40px -18px rgba(245, 165, 36, 0.5);
+  }
+  .panel-glow-just {
+    box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.12), 0 0 40px -18px rgba(34, 211, 238, 0.5);
+  }
+  .heading-display {
+    @apply font-display font-semibold uppercase tracking-wide;
+  }
+  .data-mono {
+    @apply font-mono tabular-nums;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider rounded-sm border;
+  }
+  .seg-btn {
+    @apply px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors;
+  }
+  .seg-btn-active-fed {
+    @apply bg-fed/15 text-fed-glow border border-fed/40;
+  }
+  .seg-btn-active-just {
+    @apply bg-just/15 text-just-glow border border-just/40;
+  }
+  .row-bar {
+    @apply absolute inset-y-0 left-0 -z-0 rounded-sm;
+  }
+  .skel {
+    @apply relative overflow-hidden bg-white/5;
+  }
+  .skel::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+}

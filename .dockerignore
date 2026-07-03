@@ -1,0 +1,29 @@
+# Build outputs
+.output
+.nuxt
+.nitro
+.cache
+dist
+
+# Deps
+node_modules
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Git & IDE
+.git
+.gitignore
+.github
+.fleet
+.idea
+.vscode
+
+# Docs / misc
+*.md
+.trae
+.DS_Store
+logs
+*.log

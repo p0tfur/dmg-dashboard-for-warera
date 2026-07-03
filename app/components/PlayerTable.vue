@@ -1,0 +1,108 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { formatDamage, formatFull } from '~/utils/format'
+import type { PlayerRow } from '~~/shared/types/warera'
+
+const props = withDefaults(
+  defineProps<{
+    rows: PlayerRow[]
+    loading?: boolean
+    limit?: number
+    showHelp?: boolean
+  }>(),
+  { loading: false, limit: 50, showHelp: true },
+)
+
+const sortDesc = ref(true)
+const sorted = computed(() => {
+  const arr = [...props.rows]
+  arr.sort((a, b) => (sortDesc.value ? b.damage - a.damage : a.damage - b.damage))
+  return arr.slice(0, props.limit)
+})
+const maxDamage = computed(() =>
+  sorted.value.reduce((m, r) => Math.max(m, r.damage), 0) || 1,
+)
+</script>
+
+<template>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+          <th class="py-2 pr-2 w-8 text-right font-semibold">#</th>
+          <th class="py-2 pr-2 w-10 font-semibold" />
+          <th class="py-2 pr-2 font-semibold">Gracz</th>
+          <th class="py-2 px-2 font-semibold">Kraj</th>
+          <th
+            class="py-2 px-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
+            @click="sortDesc = !sortDesc"
+          >
+            DMG <span class="opacity-50">↕</span>
+          </th>
+          <th v-if="showHelp" class="py-2 pl-2 w-16 text-right font-semibold">Help</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template v-if="loading">
+          <tr v-for="i in 6" :key="i">
+            <td class="py-2.5"><div class="skel h-4 w-5 ml-auto rounded-sm" /></td>
+            <td class="py-2.5"><div class="skel h-7 w-7 rounded-full" /></td>
+            <td class="py-2.5"><div class="skel h-4 rounded-sm" :style="{ width: 35 + i * 7 + '%' }" /></td>
+            <td class="py-2.5"><div class="skel h-4 w-16 rounded-sm" /></td>
+            <td class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
+            <td v-if="showHelp" class="py-2.5"><div class="skel h-4 w-8 ml-auto rounded-sm" /></td>
+          </tr>
+        </template>
+
+        <template v-else>
+          <tr
+            v-for="r in sorted"
+            :key="r.id"
+            class="border-t border-white/[0.04] hover:bg-white/[0.025]"
+          >
+            <td class="py-2.5 pr-2 text-right data-mono text-xs text-just/70">
+              {{ r.rank ?? '—' }}
+            </td>
+            <td class="py-2 pr-2 align-middle">
+              <img
+                v-if="r.avatarUrl"
+                :src="r.avatarUrl"
+                :alt="r.name"
+                class="h-7 w-7 rounded-full object-cover border border-white/10"
+                loading="lazy"
+                @error="($event.target as HTMLImageElement).style.display = 'none'"
+              />
+              <div
+                v-else
+                class="h-7 w-7 rounded-full grid place-items-center bg-just/10 text-just text-[10px] font-bold border border-just/20"
+              >
+                {{ (r.name || '?').slice(0, 1).toUpperCase() }}
+              </div>
+            </td>
+            <td class="py-2.5 pr-2 min-w-0">
+              <span class="truncate text-zinc-100 font-medium">{{ r.name }}</span>
+            </td>
+            <td class="py-2 px-2 whitespace-nowrap">
+              <span class="text-zinc-400 text-xs">{{ r.countryName ?? '—' }}</span>
+            </td>
+            <td
+              class="py-2.5 px-2 text-right data-mono font-semibold text-zinc-100"
+              :title="formatFull(r.damage)"
+            >
+              {{ formatDamage(r.damage) }}
+            </td>
+            <td v-if="showHelp" class="py-2.5 pl-2 text-right data-mono text-xs text-zinc-500">
+              {{ r.help ?? '—' }}
+            </td>
+          </tr>
+        </template>
+
+        <tr v-if="!loading && sorted.length === 0">
+          <td :colspan="showHelp ? 6 : 5" class="py-8 text-center text-zinc-600 text-sm">
+            Brak członków w tym okresie.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
