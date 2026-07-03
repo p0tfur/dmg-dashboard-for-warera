@@ -15,6 +15,15 @@ const FEDERATION_ID = process.env.WARERA_ALLIANCE_ID as string | undefined
 // Pinned: there are two MUs named "Justice" in the game, so name search would
 // resolve to the wrong one. Override with WARERA_MU_ID if this ever changes.
 const JUSTICE_ID = (process.env.WARERA_MU_ID as string | undefined) ?? '687633b772c4886cc6fa3d56'
+// MUs to always include in the Federation "DMG per military unit" ranking even
+// if their founding country is not an alliance member (e.g. the other "Justice"
+// is registered under Sweden). Comma-separated IDs.
+const FED_EXTRA_MU_IDS = new Set(
+  ((process.env.WARERA_FED_EXTRA_MU_IDS as string | undefined) ?? '698ca55790b70ac76de933c5')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+)
 
 // ---------------- SWR cache (in-memory) ----------------
 interface CacheEntry<T> {
@@ -318,10 +327,11 @@ export async function getFederationData(period: Period): Promise<FederationRespo
     }
     finalizeRows(byCountry)
 
-    // per MU (alliance countries)
+    // per MU (alliance countries + force-included extras)
     const byMu: DamageRow[] = []
     for (const mu of allMus) {
-      if (!mu.country || !memberSet.has(mu.country)) continue
+      const isExtra = FED_EXTRA_MU_IDS.has(mu.id)
+      if (!mu.country || (!isExtra && !memberSet.has(mu.country))) continue
       const damage = period === 'all' ? mu.total : mu.weekly
       if (damage <= 0) continue
       byMu.push({
