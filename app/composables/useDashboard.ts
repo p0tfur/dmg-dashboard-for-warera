@@ -8,6 +8,7 @@ import type {
 
 const PERIODS: Period[] = ['week', 'month', 'all']
 const REFRESH_MS = 60_000
+const FED_SUPPORT_REV = '2'
 
 export function useDashboard() {
   const period = useState<Period>('period', () => 'week')
@@ -31,8 +32,10 @@ export function useDashboard() {
   const federationSupport = useFetch<FederationSupportResponse | null>(
     '/api/federationSupport',
     {
-      key: 'federationSupport',
-      query: { period: fedPeriod },
+      // Cache-buster: older deployments accidentally allowed `building=true`
+      // to be cached for this URL. Bump the query rev to force a fresh cache key.
+      key: `federationSupport:${FED_SUPPORT_REV}`,
+      query: { period: fedPeriod, rev: FED_SUPPORT_REV },
       default: () => null,
       watch: [fedPeriod],
     },
