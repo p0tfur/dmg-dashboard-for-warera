@@ -38,6 +38,30 @@ export function useDashboard() {
     },
   )
 
+  // The support aggregate can take minutes to build on the server (background
+  // scan). When the server returns `building: true`, poll every 15s until the
+  // real data is ready — without blocking the other panels.
+  let supportTimer: ReturnType<typeof setInterval> | null = null
+  watch(
+    () => federationSupport.data.value?.building,
+    (building) => {
+      if (building && !supportTimer) {
+        supportTimer = setInterval(() => {
+          if (federationSupport.data.value?.building) {
+            federationSupport.refresh()
+          } else if (supportTimer) {
+            clearInterval(supportTimer)
+            supportTimer = null
+          }
+        }, 15_000)
+      } else if (!building && supportTimer) {
+        clearInterval(supportTimer)
+        supportTimer = null
+      }
+    },
+    { immediate: true },
+  )
+
   const justice = useFetch<JusticeResponse | null>('/api/justice', {
     key: 'justice',
     query: { period },
@@ -65,6 +89,7 @@ export function useDashboard() {
   })
   onBeforeUnmount(() => {
     if (timer) clearInterval(timer)
+    if (supportTimer) clearInterval(supportTimer)
   })
 
   return { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh }

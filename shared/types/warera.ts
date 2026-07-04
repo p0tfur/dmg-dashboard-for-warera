@@ -141,6 +141,12 @@ export interface FederationSupportResponse {
   period: Period
   updatedAt: string
   fromCache: boolean
+  /**
+   * True when the aggregate is still being built in the background (the
+   * expensive per-country scan can take minutes for "all"). The frontend
+   * should poll until `building` flips to false/undefined.
+   */
+  building?: boolean
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 

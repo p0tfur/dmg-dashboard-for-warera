@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Swords, Globe2, Users, Trophy, Shield, Layers, Activity, Crosshair,
-  HeartHandshake,
+  HeartHandshake, Loader2,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, PERIOD_LABEL } from '~/utils/format'
 
@@ -139,7 +139,19 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
             <p class="text-sm text-danger">Failed to load ally support: {{ fedSupErr.statusMessage || fedSupErr.message }}</p>
           </div>
 
-          <div class="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-white/5">
+          <!-- Building state: scan runs in background on the server, can take minutes -->
+          <div v-if="fedSup?.building" class="px-4 py-6 border-b border-fed/20 flex items-center gap-3">
+            <Loader2 class="h-5 w-5 text-fed-glow animate-spin shrink-0" />
+            <div class="min-w-0">
+              <p class="text-sm text-zinc-200">Building ally-support ranking in the background…</p>
+              <p class="text-xs text-zinc-500 mt-0.5">
+                Scanning each Federation member's battles. This can take a few minutes on the
+                first load — the panel refreshes automatically when data is ready.
+              </p>
+            </div>
+          </div>
+
+          <div v-else class="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-white/5">
             <!-- Two side-by-side KPIs: support vs own -->
             <div class="px-4 py-4 flex flex-col justify-center">
               <div class="flex items-end gap-4 flex-wrap">
