@@ -432,31 +432,32 @@ interface BattleListItem {
 }
 
 /**
- * Paginates battle.getBattles (newest first via direction=backward) until:
+ * Paginates battle.getBattles for ONE country (its battles as attacker or
+ * defender) until:
  *   • the weekly cutoff is passed (when period === 'week'),
- *   • the per-period scan cap is reached,
+ *   • the per-country page cap is reached,
  *   • or the cursor is exhausted.
- * Returns deduplicated battles (by _id) plus the raw count scanned.
+ * Battles are returned newest-first by the API.
  */
-async function scanBattles(period: Period): Promise<{
-  battles: BattleListItem[]
-  scanned: number
-}> {
+async function scanCountryBattles(
+  countryId: string,
+  period: Period,
+): Promise<{ battles: BattleListItem[]; scanned: number }> {
   const weekMs = 7 * 24 * 60 * 60 * 1000
   const weekCutoff = period === 'week' ? Date.now() - weekMs : 0
-  // Hard safety caps so we never blow the rate-limit window:
-  //   • week  → up to ~10 pages (1000 battles)
-  //   • all   → up to ~15 pages (1500 battles)
-  const maxPages = period === 'week' ? 10 : 15
+  // Per-country caps: enough to cover a week (~10 pages) or full history
+  // (~30 pages ≈ 3000 battles per country, well beyond realistic activity).
+  const maxPages = period === 'week' ? 10 : 30
   const pageSize = 100
 
-  const out = new Map<string, BattleListItem>()
+  const out: BattleListItem[] = []
   let cursor: string | undefined
   let scanned = 0
   let guard = 0
 
   while (guard < maxPages) {
     const raw = await trpcGet<any>('battle.getBattles', {
+      countryId,
       isActive: false,
       limit: pageSize,
       direction: 'backward',
@@ -465,22 +466,53 @@ async function scanBattles(period: Period): Promise<{
     const items: any[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
     if (!items.length) break
 
+    let hitCutoff = false
     for (const b of items) {
       if (!b?._id) continue
       scanned++
-      out.set(b._id, b as BattleListItem)
-      // Stop once we cross the weekly cutoff (list is newest-first).
+      out.push(b as BattleListItem)
       if (weekCutoff && b.createdAt && Date.parse(b.createdAt) < weekCutoff) {
-        return { battles: [...out.values()], scanned }
+        hitCutoff = true
+        break
       }
     }
 
+    if (hitCutoff) break
     cursor = raw?.nextCursor ?? undefined
     if (!cursor) break
     guard++
   }
 
-  return { battles: [...out.values()], scanned }
+  return { battles: out, scanned }
+}
+
+/**
+ * Scans battles for every Federation member country (in parallel, capped),
+ * deduplicates by _id (the same battle may appear for both attacker and
+ * defender), and returns the unique set plus the raw scan count.
+ */
+async function scanFederationBattles(
+  memberCountryIds: string[],
+  period: Period,
+): Promise<{ battles: BattleListItem[]; scanned: number }> {
+  // Bound concurrency so we don't melt the rate-limit window: at most 3
+  // countries paginating in parallel.
+  const CONCURRENCY = 3
+  const unique = new Map<string, BattleListItem>()
+  let scanned = 0
+
+  for (let i = 0; i < memberCountryIds.length; i += CONCURRENCY) {
+    const batch = memberCountryIds.slice(i, i + CONCURRENCY)
+    const results = await Promise.all(
+      batch.map((cid) => scanCountryBattles(cid, period)),
+    )
+    for (const r of results) {
+      scanned += r.scanned
+      for (const b of r.battles) unique.set(b._id, b)
+    }
+  }
+
+  return { battles: [...unique.values()], scanned }
 }
 
 /**
@@ -527,17 +559,24 @@ export async function getFederationSupportData(
   }
 
   const cacheKey = `fedSupport:${period}`
-  const { data, fromCache } = await swr(cacheKey, 5 * 60 * 1000, async () => {
+  // Per-country scan is comprehensive but expensive — cache 2h so a typical
+  // refresh window never re-triggers the full pagination sweep.
+  const { data, fromCache } = await swr(cacheKey, 2 * 60 * 60 * 1000, async () => {
     const [alliance, { byId: countries }] = await Promise.all([
       getAlliance(allianceId),
       getCountries(),
     ])
     const memberSet = new Set(alliance.memberCountryIds)
 
-    const { battles, scanned } = await scanBattles(period)
+    const { battles, scanned } = await scanFederationBattles(
+      alliance.memberCountryIds,
+      period,
+    )
 
-    // countryId → support damage
+    // countryId → support damage (DMG in OTHER allies' battles)
     const support = new Map<string, number>()
+    // countryId → own damage (DMG in battles where this country is att or def)
+    const own = new Map<string, number>()
     let allyBattles = 0
 
     for (const b of battles) {
@@ -546,12 +585,8 @@ export async function getFederationSupportData(
       const defFed = def ? memberSet.has(def) : false
       const attFed = att ? memberSet.has(att) : false
 
-      // Skip battles with no Federation involvement, and internal Fed-vs-Fed.
+      // Skip battles with no Federation involvement.
       if (!defFed && !attFed) continue
-      if (defFed && attFed) continue
-
-      // The ally whose battle this is — their own DMG is excluded.
-      const owner = defFed ? def! : att!
 
       let ranking: Map<string, number>
       try {
@@ -561,18 +596,39 @@ export async function getFederationSupportData(
         continue
       }
       if (!ranking.size) continue
-      allyBattles++
 
-      for (const [cid, dmg] of ranking) {
-        if (cid === owner) continue
-        if (!memberSet.has(cid)) continue
-        support.set(cid, (support.get(cid) ?? 0) + dmg)
+      const isInternalFedWar = defFed && attFed
+      if (!isInternalFedWar) {
+        allyBattles++
+        // Support = DMG dealt by OTHER Fed members in this ally's battle.
+        const owner = defFed ? def! : att!
+        for (const [cid, dmg] of ranking) {
+          if (cid === owner) continue
+          if (!memberSet.has(cid)) continue
+          support.set(cid, (support.get(cid) ?? 0) + dmg)
+        }
+      }
+
+      // Own = each Fed participant's DMG in a battle they own (att or def).
+      // Counts for both sides in internal Fed-vs-Fed wars.
+      if (defFed) {
+        const ownDmg = ranking.get(def!) ?? 0
+        if (ownDmg > 0) own.set(def!, (own.get(def!) ?? 0) + ownDmg)
+      }
+      if (attFed) {
+        const ownDmg = ranking.get(att!) ?? 0
+        if (ownDmg > 0) own.set(att!, (own.get(att!) ?? 0) + ownDmg)
       }
     }
 
     const byCountry: DamageRow[] = []
-    for (const [cid, dmg] of support) {
-      if (dmg <= 0) continue
+    // Include any Fed country that appears in either support or own totals,
+    // so the comparison column is shown even for countries with 0 support.
+    const cids = new Set<string>([...support.keys(), ...own.keys()])
+    for (const cid of cids) {
+      const dmg = support.get(cid) ?? 0
+      const ownDmg = own.get(cid) ?? 0
+      if (dmg <= 0 && ownDmg <= 0) continue
       const c = countries.get(cid)
       byCountry.push({
         id: cid,
@@ -580,7 +636,7 @@ export async function getFederationSupportData(
         damage: dmg,
         share: 0,
         rank: null,
-        meta: { code: c?.code ?? null },
+        meta: { code: c?.code ?? null, ownDamage: ownDmg },
       })
     }
     finalizeRows(byCountry)

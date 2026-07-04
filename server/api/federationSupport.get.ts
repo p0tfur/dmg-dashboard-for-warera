@@ -7,8 +7,9 @@ export default defineEventHandler(async (event) => {
   if (!['week', 'all'].includes(period)) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid period (week|all)', })
   }
-  // Aggregation is expensive — allow the CDN/browser to hold it longer than
-  // the main federation response. SWR on the server keeps a fresh-enough copy.
-  setHeader(event, 'Cache-Control', 'public, max-age=120, stale-while-revalidate=600')
+  // Per-country scan is expensive (~1-2 min) and covers comprehensive history.
+  // Match the 2h SWR cache so the browser/CDN hold the response equally long
+  // and never trigger a re-fetch storm on the server.
+  setHeader(event, 'Cache-Control', 'public, max-age=7200, stale-while-revalidate=14400')
   return getFederationSupportData(period)
 })

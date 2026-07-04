@@ -17,6 +17,14 @@ const fedErr = computed(() => federation.error.value as (Error & { statusMessage
 const fedSupErr = computed(() => federationSupport.error.value as (Error & { statusMessage?: string }) | null)
 const jusErr = computed(() => justice.error.value as (Error & { statusMessage?: string }) | null)
 
+// Total "own" DMG across all Federation countries for comparison KPI.
+const fedSupOwnTotal = computed(() =>
+  (fedSup.value?.byCountry ?? []).reduce(
+    (s, r) => s + (typeof r.meta?.ownDamage === 'number' ? (r.meta.ownDamage as number) : 0),
+    0,
+  ),
+)
+
 useHead({ title: 'WarEra DMG — The Federation & Justice' })
 </script>
 
@@ -111,9 +119,9 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <h3 class="heading-display text-sm text-zinc-200">Ally support DMG per country</h3>
               <span
                 class="hidden md:inline text-[11px] text-zinc-500 truncate"
-                title="DMG dealt by each Federation member in OTHER allies' battles (own battles excluded). Internal Fed-vs-Fed wars are skipped."
+                title="Support = DMG in OTHER allies' battles. Own = DMG in this country's own battles (attacker or defender)."
               >
-                · DMG in allies' battles (own battles excluded)
+                · Support vs Own battles
               </span>
             </div>
             <div class="flex items-center gap-3 text-[10px] uppercase tracking-wider text-zinc-600">
@@ -132,15 +140,30 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
           </div>
 
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-white/5">
-            <!-- Total support KPI -->
+            <!-- Two side-by-side KPIs: support vs own -->
             <div class="px-4 py-4 flex flex-col justify-center">
-              <p class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold">Total Support DMG</p>
-              <p class="mt-1 text-2xl sm:text-3xl data-mono font-bold text-fed-glow">
-                {{ fedSup ? formatFull(fedSup.totalSupportDamage) : '…' }}
-              </p>
-              <p class="mt-1 text-xs text-zinc-500">
-                {{ fedSup ? formatDamage(fedSup.totalSupportDamage) : '—' }} ·
-                {{ fedSup?.byCountry?.length ?? 0 }} contributors
+              <div class="flex items-end gap-4 flex-wrap">
+                <div>
+                  <p class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold flex items-center gap-1">
+                    <span class="h-1.5 w-1.5 rounded-full bg-fed" /> Support
+                  </p>
+                  <p class="mt-1 text-2xl sm:text-3xl data-mono font-bold text-fed-glow">
+                    {{ fedSup ? formatFull(fedSup.totalSupportDamage) : '…' }}
+                  </p>
+                </div>
+                <div>
+                  <p class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold flex items-center gap-1">
+                    <span class="h-1.5 w-1.5 rounded-full bg-danger" /> Own
+                  </p>
+                  <p class="mt-1 text-xl sm:text-2xl data-mono font-bold text-danger">
+                    {{ fedSup ? formatFull(fedSupOwnTotal) : '…' }}
+                  </p>
+                </div>
+              </div>
+              <p class="mt-2 text-xs text-zinc-500">
+                {{ fedSup ? formatDamage(fedSup.totalSupportDamage) : '—' }} support ·
+                {{ fedSup ? formatDamage(fedSupOwnTotal) : '—' }} own ·
+                {{ fedSup?.byCountry?.length ?? 0 }} countries
               </p>
             </div>
 
@@ -152,6 +175,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 accent="fed"
                 show-flag
                 :limit="50"
+                :secondary="{ key: 'ownDamage', label: 'Own DMG', accent: 'danger' }"
               />
             </div>
           </div>
