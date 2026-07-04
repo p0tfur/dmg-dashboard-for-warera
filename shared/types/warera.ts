@@ -111,6 +111,12 @@ export interface PlayerRow {
   rank?: number | null
 }
 
+export interface DailyDamagePoint {
+  date: string
+  damage: number
+  battles: number
+}
+
 export interface FederationResponse {
   allianceName: string
   avatarUrl?: string | null
@@ -162,6 +168,22 @@ export interface JusticeResponse {
   period: Period
   updatedAt: string
   fromCache: boolean
+  rateLimit?: { remaining?: number | null; limit?: number | null } | null
+}
+
+export interface JusticePlayerDailyResponse {
+  userId: string
+  playerName: string
+  avatarUrl?: string | null
+  countryId?: string | null
+  countryName?: string | null
+  days: DailyDamagePoint[]
+  totalDamage: number
+  daysRequested: number
+  battlesScanned: number
+  updatedAt: string
+  fromCache: boolean
+  building?: boolean
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 

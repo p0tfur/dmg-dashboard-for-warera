@@ -4,6 +4,7 @@ import {
   HeartHandshake, Loader2,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, PERIOD_LABEL } from '~/utils/format'
+import type { JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
 
 const { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh } = useDashboard()
 
@@ -24,6 +25,104 @@ const fedSupOwnTotal = computed(() =>
     0,
   ),
 )
+
+const selectedJusticePlayer = ref<PlayerRow | null>(null)
+const justicePlayerDaily = ref<JusticePlayerDailyResponse | null>(null)
+const justicePlayerDailyLoading = ref(false)
+const justicePlayerDailyError = ref<string | null>(null)
+let justicePlayerDailyRequest = 0
+let justicePlayerDailyTimer: ReturnType<typeof setInterval> | null = null
+
+function stopJusticePlayerDailyPolling() {
+  if (justicePlayerDailyTimer) {
+    clearInterval(justicePlayerDailyTimer)
+    justicePlayerDailyTimer = null
+  }
+}
+
+function startJusticePlayerDailyPolling(playerId: string, requestId: number) {
+  if (justicePlayerDailyTimer) return
+  justicePlayerDailyTimer = setInterval(async () => {
+    if (!selectedJusticePlayer.value || selectedJusticePlayer.value.id !== playerId || requestId !== justicePlayerDailyRequest) {
+      stopJusticePlayerDailyPolling()
+      return
+    }
+
+    try {
+      const data = await $fetch<JusticePlayerDailyResponse>('/api/justicePlayerDaily', {
+        query: { userId: playerId, days: 7 },
+      })
+      if (requestId !== justicePlayerDailyRequest) return
+      if (data.building) {
+        justicePlayerDailyLoading.value = true
+        return
+      }
+      justicePlayerDaily.value = data
+      justicePlayerDailyLoading.value = false
+      stopJusticePlayerDailyPolling()
+    } catch {
+      // Keep polling; transient upstream/rate-limit errors are expected here.
+    }
+  }, 10_000)
+}
+
+async function selectJusticePlayer(player: PlayerRow) {
+  if (selectedJusticePlayer.value?.id === player.id) {
+    justicePlayerDailyRequest++
+    stopJusticePlayerDailyPolling()
+    selectedJusticePlayer.value = null
+    justicePlayerDaily.value = null
+    justicePlayerDailyError.value = null
+    justicePlayerDailyLoading.value = false
+    return
+  }
+
+  const requestId = ++justicePlayerDailyRequest
+  let keepLoading = false
+  stopJusticePlayerDailyPolling()
+  selectedJusticePlayer.value = player
+  justicePlayerDaily.value = null
+  justicePlayerDailyLoading.value = true
+  justicePlayerDailyError.value = null
+
+  try {
+    const data = await $fetch<JusticePlayerDailyResponse>('/api/justicePlayerDaily', {
+      query: { userId: player.id, days: 7 },
+    })
+    if (requestId !== justicePlayerDailyRequest) return
+    if (data.building) {
+      justicePlayerDaily.value = null
+      justicePlayerDailyLoading.value = true
+      keepLoading = true
+      startJusticePlayerDailyPolling(player.id, requestId)
+      return
+    }
+    stopJusticePlayerDailyPolling()
+    justicePlayerDaily.value = data
+  } catch (error: any) {
+    if (requestId !== justicePlayerDailyRequest) return
+    stopJusticePlayerDailyPolling()
+    justicePlayerDaily.value = null
+    justicePlayerDailyError.value = error?.data?.statusMessage ?? error?.message ?? 'Unknown error'
+  } finally {
+    if (requestId === justicePlayerDailyRequest) {
+      justicePlayerDailyLoading.value = keepLoading
+    }
+  }
+}
+
+watch(period, () => {
+  justicePlayerDailyRequest++
+  stopJusticePlayerDailyPolling()
+  selectedJusticePlayer.value = null
+  justicePlayerDaily.value = null
+  justicePlayerDailyError.value = null
+  justicePlayerDailyLoading.value = false
+})
+
+onBeforeUnmount(() => {
+  stopJusticePlayerDailyPolling()
+})
 
 useHead({ title: 'WarEra DMG — The Federation & Justice' })
 </script>
@@ -252,14 +351,30 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
 
           <div class="panel clip-corner panel-glow-just">
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
-              <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
-                <Users class="h-4 w-4 text-just" /> DMG per player
-              </h3>
+              <div class="min-w-0">
+                <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
+                  <Users class="h-4 w-4 text-just" /> DMG per player
+                </h3>
+                <p class="mt-1 text-[11px] text-zinc-500">
+                  Click a player to view day-by-day DMG for the last 7 days.
+                </p>
+              </div>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[period] }}</span>
             </div>
             <div class="px-2 py-1">
-              <PlayerTable :rows="jus?.byPlayer ?? []" :loading="jusLoading" />
+              <PlayerTable
+                :rows="jus?.byPlayer ?? []"
+                :loading="jusLoading"
+                :selected-id="selectedJusticePlayer?.id ?? null"
+                @select="selectJusticePlayer"
+              />
             </div>
+            <PlayerDailyCard
+              :player="selectedJusticePlayer"
+              :data="justicePlayerDaily"
+              :loading="justicePlayerDailyLoading"
+              :error="justicePlayerDailyError"
+            />
           </div>
         </div>
       </section>

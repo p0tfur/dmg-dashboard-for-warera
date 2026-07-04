@@ -9,9 +9,13 @@ const props = withDefaults(
     loading?: boolean
     limit?: number
     showHelp?: boolean
+    selectedId?: string | null
   }>(),
-  { loading: false, limit: 50, showHelp: true },
+  { loading: false, limit: 50, showHelp: true, selectedId: null },
 )
+const emit = defineEmits<{
+  select: [row: PlayerRow]
+}>()
 
 const sortDesc = ref(true)
 const sorted = computed(() => {
@@ -22,6 +26,10 @@ const sorted = computed(() => {
 const maxDamage = computed(() =>
   sorted.value.reduce((m, r) => Math.max(m, r.damage), 0) || 1,
 )
+
+function selectRow(row: PlayerRow) {
+  emit('select', row)
+}
 </script>
 
 <template>
@@ -58,7 +66,13 @@ const maxDamage = computed(() =>
           <tr
             v-for="r in sorted"
             :key="r.id"
-            class="border-t border-white/[0.04] hover:bg-white/[0.025]"
+            class="border-t border-white/[0.04] cursor-pointer transition-colors hover:bg-white/[0.025]"
+            :class="r.id === selectedId ? 'bg-just/10 ring-1 ring-inset ring-just/25' : ''"
+            tabindex="0"
+            role="button"
+            @click="selectRow(r)"
+            @keydown.enter.prevent="selectRow(r)"
+            @keydown.space.prevent="selectRow(r)"
           >
             <td class="py-2.5 pr-2 text-right data-mono text-xs text-just/70">
               {{ r.rank ?? '—' }}
@@ -80,7 +94,15 @@ const maxDamage = computed(() =>
               </div>
             </td>
             <td class="py-2.5 pr-2 min-w-0">
-              <span class="truncate text-zinc-100 font-medium">{{ r.name }}</span>
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="truncate text-zinc-100 font-medium">{{ r.name }}</span>
+                <span
+                  v-if="r.id === selectedId"
+                  class="text-[10px] uppercase tracking-[0.16em] text-just-glow"
+                >
+                  Selected
+                </span>
+              </div>
             </td>
             <td class="py-2 px-2 whitespace-nowrap">
               <span class="text-zinc-400 text-xs">{{ r.countryName ?? '—' }}</span>

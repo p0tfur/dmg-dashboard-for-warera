@@ -1,9 +1,11 @@
 import { trpcGet, getRateLimitState, waitForBudget } from './wareraClient'
 import type {
+  DailyDamagePoint,
   DamageRow,
   FederationResponse,
   FederationSupportResponse,
   JusticeResponse,
+  JusticePlayerDailyResponse,
   MetaResponse,
   Period,
   PlayerRow,
@@ -435,6 +437,7 @@ interface BattleListItem {
   _id: string
   isActive?: boolean
   createdAt?: string | null
+  endedAt?: string | null
   defender?: BattleSide
   attacker?: BattleSide
 }
@@ -811,6 +814,232 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
     fromCache,
     updatedAt: new Date().toISOString(),
   }
+}
+
+// ---------------- JUSTICE PLAYER DAILY ----------------
+
+function utcDayKey(ts: number): string {
+  const d = new Date(ts)
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function buildRecentUtcDayKeys(days: number): string[] {
+  const today = new Date()
+  const todayStart = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  )
+  return Array.from({ length: days }, (_, i) =>
+    utcDayKey(todayStart - (days - 1 - i) * 24 * 60 * 60 * 1000),
+  )
+}
+
+async function scanUserBattles(
+  userId: string,
+  days: number,
+): Promise<{ battles: BattleListItem[]; scanned: number }> {
+  const keys = buildRecentUtcDayKeys(days)
+  const cutoff = Date.parse(`${keys[0]}T00:00:00.000Z`)
+  const out: BattleListItem[] = []
+  let cursor: string | undefined
+  let scanned = 0
+  let guard = 0
+
+  while (guard < 20) {
+    const raw = await trpcGet<any>('battle.getBattles', {
+      userId,
+      isActive: false,
+      limit: 100,
+      direction: 'backward',
+      cursor,
+    })
+    const items: any[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
+    if (!items.length) break
+
+    let hitCutoff = false
+    for (const b of items) {
+      if (!b?._id) continue
+      const refIso = b?.endedAt ?? b?.createdAt ?? null
+      const refTs = refIso ? Date.parse(refIso) : NaN
+      if (Number.isFinite(refTs) && refTs < cutoff) {
+        hitCutoff = true
+        break
+      }
+      scanned++
+      out.push(b as BattleListItem)
+    }
+
+    if (hitCutoff) break
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+    guard++
+  }
+
+  return { battles: out, scanned }
+}
+
+async function getBattleUserDamage(battleId: string, userId: string): Promise<number> {
+  let cursor: string | undefined
+  let guard = 0
+
+  while (guard < 10) {
+    const raw = await trpcGet<any>('battleRanking.getRanking', {
+      battleId,
+      dataType: 'damage',
+      type: 'user',
+      side: 'merged',
+      limit: 100,
+      cursor,
+    })
+    const items: any[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
+    const hit = items.find((it) => it?.user === userId)
+    if (hit) return Number(hit?.value ?? 0)
+
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+    if (typeof raw?.itemCount === 'number' && (guard + 1) * 100 >= raw.itemCount) break
+    guard++
+  }
+
+  return 0
+}
+
+async function buildJusticePlayerDailyData(
+  userId: string,
+  days: number,
+): Promise<JusticePlayerDailyResponse> {
+  const [profile, { byId: countries }, { battles, scanned }] = await Promise.all([
+    getUserProfile(userId),
+    getCountries(),
+    scanUserBattles(userId, days),
+  ])
+
+  const dayKeys = buildRecentUtcDayKeys(days)
+  const byDay = new Map<string, DailyDamagePoint>(
+    dayKeys.map((date) => [date, { date, damage: 0, battles: 0 }]),
+  )
+
+  const relevantBattles = battles.filter((battle) => {
+    const refIso = battle.endedAt ?? battle.createdAt ?? null
+    if (!refIso) return false
+    return byDay.has(utcDayKey(Date.parse(refIso)))
+  })
+
+  const CONCURRENCY = 3
+  for (let i = 0; i < relevantBattles.length; i += CONCURRENCY) {
+    const batch = relevantBattles.slice(i, i + CONCURRENCY)
+    const batchResults = await Promise.all(
+      batch.map(async (battle) => {
+        await waitForBudget(10)
+        const damage = await getBattleUserDamage(battle._id, userId)
+        const refIso = battle.endedAt ?? battle.createdAt ?? null
+        return { damage, refIso }
+      }),
+    )
+
+    for (const { damage, refIso } of batchResults) {
+      if (!refIso || damage <= 0) continue
+      const key = utcDayKey(Date.parse(refIso))
+      const bucket = byDay.get(key)
+      if (!bucket) continue
+      bucket.damage += damage
+      bucket.battles += 1
+    }
+  }
+
+  const points = dayKeys.map((date) => byDay.get(date)!)
+  return {
+    userId,
+    playerName: profile.name,
+    avatarUrl: profile.avatarUrl,
+    countryId: profile.country ?? null,
+    countryName: profile.country ? countries.get(profile.country)?.name ?? null : null,
+    days: points,
+    totalDamage: points.reduce((sum, point) => sum + point.damage, 0),
+    daysRequested: days,
+    battlesScanned: scanned,
+    updatedAt: new Date().toISOString(),
+    fromCache: false,
+    building: false,
+    rateLimit: getRateLimitState(),
+  }
+}
+
+interface JusticePlayerDailyCacheEntry {
+  data?: JusticePlayerDailyResponse
+  promise?: Promise<void>
+  expiresAt: number
+}
+
+const justicePlayerDailyCache = new Map<string, JusticePlayerDailyCacheEntry>()
+const JUSTICE_PLAYER_DAILY_TTL = 10 * 60 * 1000
+
+function emptyJusticePlayerDaily(userId: string, days: number): JusticePlayerDailyResponse {
+  return {
+    userId,
+    playerName: userId,
+    avatarUrl: null,
+    countryId: null,
+    countryName: null,
+    days: [],
+    totalDamage: 0,
+    daysRequested: days,
+    battlesScanned: 0,
+    updatedAt: new Date().toISOString(),
+    fromCache: false,
+    building: true,
+    rateLimit: getRateLimitState(),
+  }
+}
+
+async function buildJusticePlayerDailyCache(userId: string, days: number): Promise<void> {
+  const data = await buildJusticePlayerDailyData(userId, days)
+  justicePlayerDailyCache.set(`${userId}:${days}`, {
+    data,
+    expiresAt: Date.now() + JUSTICE_PLAYER_DAILY_TTL,
+  })
+}
+
+export async function getJusticePlayerDaily(
+  userId: string,
+  days = 7,
+): Promise<JusticePlayerDailyResponse> {
+  const safeDays = Math.min(Math.max(Math.floor(days || 7), 1), 7)
+  const key = `${userId}:${safeDays}`
+  const entry = justicePlayerDailyCache.get(key)
+  const now = Date.now()
+
+  if (entry?.data && entry.expiresAt > now) {
+    return { ...entry.data, fromCache: true, building: false }
+  }
+
+  if (entry?.data) {
+    if (!entry.promise) {
+      entry.promise = buildJusticePlayerDailyCache(userId, safeDays)
+        .catch(() => {})
+        .finally(() => {
+          const current = justicePlayerDailyCache.get(key)
+          if (current) current.promise = undefined
+        })
+    }
+    return { ...entry.data, fromCache: true, building: false }
+  }
+
+  if (!entry?.promise) {
+    const promise = buildJusticePlayerDailyCache(userId, safeDays)
+      .catch(() => {})
+      .finally(() => {
+        const current = justicePlayerDailyCache.get(key)
+        if (current) current.promise = undefined
+      })
+    justicePlayerDailyCache.set(key, { promise, expiresAt: 0 })
+  }
+
+  return emptyJusticePlayerDaily(userId, safeDays)
 }
 
 // ---------------- META ----------------
