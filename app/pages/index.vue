@@ -113,7 +113,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 class="hidden md:inline text-[11px] text-zinc-500 truncate"
                 title="DMG dealt by each Federation member in OTHER allies' battles (own battles excluded). Internal Fed-vs-Fed wars are skipped."
               >
-                · DMG w bitwach sojuszników (własne bitwy wyłączone)
+                · DMG in allies' battles (own battles excluded)
               </span>
             </div>
             <div class="flex items-center gap-3 text-[10px] uppercase tracking-wider text-zinc-600">

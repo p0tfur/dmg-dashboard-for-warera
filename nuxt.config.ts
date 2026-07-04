@@ -5,8 +5,12 @@ export default defineNuxtConfig({
   modules: ['@nuxtjs/tailwindcss'],
   css: ['~/assets/css/main.css'],
   runtimeConfig: {
-    wareraApiKey: process.env.WARERA_API_KEY as string | undefined,
-    wareraBaseUrl: (process.env.WARERA_BASE_URL as string | undefined) || 'https://api2.warera.io/trpc',
+    // Leave empty — overridden at RUNTIME by env vars:
+    //   NUXT_WARERA_API_KEY, NUXT_WARERA_BASE_URL
+    // (Nuxt auto-maps NUXT_<KEY> → runtimeConfig.<key> on server start,
+    //  so Coolify/runtime env vars work without rebuilding the image.)
+    wareraApiKey: '',
+    wareraBaseUrl: 'https://api2.warera.io/trpc',
   },
   app: {
     head: {
