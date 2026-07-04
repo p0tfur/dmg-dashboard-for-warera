@@ -27,6 +27,23 @@ export function getRateLimitState(): {
   return { remaining: rl.remaining, limit: rl.limit }
 }
 
+/**
+ * Proactively waits until the rate-limit budget recovers to at least
+ * `minRemaining`. Used by the background support scan so it doesn't
+ * starve regular (federation/justice/meta) endpoint calls.
+ */
+export async function waitForBudget(minRemaining = 30): Promise<void> {
+  if (rl.remaining !== null && rl.remaining < minRemaining && rl.resetAt) {
+    const wait = rl.resetAt - Date.now()
+    if (wait > 0) {
+      console.warn(
+        `[warera] throttling background scan (${rl.remaining}/${rl.limit}, waiting ${Math.round(wait)}ms)`,
+      )
+      await sleep(wait + 500)
+    }
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }

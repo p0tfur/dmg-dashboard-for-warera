@@ -1,4 +1,4 @@
-import { trpcGet, getRateLimitState } from './wareraClient'
+import { trpcGet, getRateLimitState, waitForBudget } from './wareraClient'
 import type {
   DamageRow,
   FederationResponse,
@@ -457,6 +457,7 @@ async function scanCountryBattles(
   let guard = 0
 
   while (guard < maxPages) {
+    await waitForBudget(30)
     const raw = await trpcGet<any>('battle.getBattles', {
       countryId,
       isActive: false,
@@ -580,6 +581,9 @@ async function buildSupportCache(period: Period): Promise<void> {
     const defFed = def ? memberSet.has(def) : false
     const attFed = att ? memberSet.has(att) : false
     if (!defFed && !attFed) continue
+
+    // Throttle: leave budget for regular (non-scan) endpoint calls.
+    await waitForBudget(30)
 
     let ranking: Map<string, number>
     try {
