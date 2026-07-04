@@ -7,7 +7,11 @@ export default defineEventHandler(async (event) => {
   if (!['week', 'all'].includes(period)) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid period (week|all)', })
   }
-  // Short HTTP cache for CDN/browser (data is already held by SWR on the server).
-  setHeader(event, 'Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
+  // "all" is cumulative & stable → let the CDN/browser hold it much longer.
+  if (period === 'all') {
+    setHeader(event, 'Cache-Control', 'public, max-age=1800, stale-while-revalidate=3600')
+  } else {
+    setHeader(event, 'Cache-Control', 'public, max-age=30, stale-while-revalidate=60')
+  }
   return getFederationData(period)
 })

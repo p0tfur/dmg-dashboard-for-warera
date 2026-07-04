@@ -126,6 +126,24 @@ export interface FederationResponse {
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 
+/**
+ * "Ally support" ranking: damage done by each Federation country in battles
+ * fought by OTHER Federation members (either as attacker or defender). Each
+ * country's "own" battles are excluded, so we only count DMG spent helping
+ * allies. Internal Federation-vs-Federation wars are skipped entirely.
+ */
+export interface FederationSupportResponse {
+  allianceName: string
+  totalSupportDamage: number
+  byCountry: DamageRow[]
+  battlesScanned: number
+  allyBattlesCount: number
+  period: Period
+  updatedAt: string
+  fromCache: boolean
+  rateLimit?: { remaining?: number | null; limit?: number | null } | null
+}
+
 export interface JusticeResponse {
   muName: string
   avatarUrl?: string | null

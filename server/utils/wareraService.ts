@@ -2,6 +2,7 @@ import { trpcGet, getRateLimitState } from './wareraClient'
 import type {
   DamageRow,
   FederationResponse,
+  FederationSupportResponse,
   JusticeResponse,
   MetaResponse,
   Period,
@@ -333,7 +334,10 @@ export async function getFederationData(period: Period): Promise<FederationRespo
   }
 
   const cacheKey = `fed:${period}`
-  const { data, fromCache } = await swr(cacheKey, 45 * 1000, async () => {
+  // "all" damage is cumulative and barely moves — cache aggressively to save
+  // API quota. "week" resets every week and grows actively, so keep it short.
+  const fedTtl = period === 'all' ? 30 * 60 * 1000 : 45 * 1000
+  const { data, fromCache } = await swr(cacheKey, fedTtl, async () => {
     const [alliance, { byId: countries }, allMusBase] = await Promise.all([
       getAlliance(allianceId),
       getCountries(),
@@ -414,6 +418,195 @@ export async function getFederationData(period: Period): Promise<FederationRespo
   }
 }
 
+// ---------------- FEDERATION ALLY SUPPORT ----------------
+
+interface BattleSide {
+  country?: string | null
+}
+interface BattleListItem {
+  _id: string
+  isActive?: boolean
+  createdAt?: string | null
+  defender?: BattleSide
+  attacker?: BattleSide
+}
+
+/**
+ * Paginates battle.getBattles (newest first via direction=backward) until:
+ *   • the weekly cutoff is passed (when period === 'week'),
+ *   • the per-period scan cap is reached,
+ *   • or the cursor is exhausted.
+ * Returns deduplicated battles (by _id) plus the raw count scanned.
+ */
+async function scanBattles(period: Period): Promise<{
+  battles: BattleListItem[]
+  scanned: number
+}> {
+  const weekMs = 7 * 24 * 60 * 60 * 1000
+  const weekCutoff = period === 'week' ? Date.now() - weekMs : 0
+  // Hard safety caps so we never blow the rate-limit window:
+  //   • week  → up to ~10 pages (1000 battles)
+  //   • all   → up to ~15 pages (1500 battles)
+  const maxPages = period === 'week' ? 10 : 15
+  const pageSize = 100
+
+  const out = new Map<string, BattleListItem>()
+  let cursor: string | undefined
+  let scanned = 0
+  let guard = 0
+
+  while (guard < maxPages) {
+    const raw = await trpcGet<any>('battle.getBattles', {
+      isActive: false,
+      limit: pageSize,
+      direction: 'backward',
+      cursor,
+    })
+    const items: any[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
+    if (!items.length) break
+
+    for (const b of items) {
+      if (!b?._id) continue
+      scanned++
+      out.set(b._id, b as BattleListItem)
+      // Stop once we cross the weekly cutoff (list is newest-first).
+      if (weekCutoff && b.createdAt && Date.parse(b.createdAt) < weekCutoff) {
+        return { battles: [...out.values()], scanned }
+      }
+    }
+
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+    guard++
+  }
+
+  return { battles: [...out.values()], scanned }
+}
+
+/**
+ * Fetches the per-country damage ranking for a single battle (merged sides,
+ * one page of up to 100 entries — enough for the country distribution).
+ */
+async function getBattleCountryDamage(battleId: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  const raw = await trpcGet<any>('battleRanking.getRanking', {
+    battleId,
+    dataType: 'damage',
+    type: 'country',
+    side: 'merged',
+    limit: 100,
+  })
+  const items: any[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
+  for (const it of items) {
+    const cid = it?.country
+    const value = Number(it?.value ?? 0)
+    if (cid && value > 0) out.set(cid, value)
+  }
+  return out
+}
+
+/**
+ * "Ally support" damage: for each Federation member country C, sums the DMG
+ * C dealt in battles fought by OTHER Federation members — either defending
+ * their own region (defender.country ∈ alliance) or attacking abroad
+ * (attacker.country ∈ alliance). The "owner" of each battle (the ally whose
+ * fight it is) is excluded from its own support total. Internal
+ * Federation-vs-Federation battles are skipped (no ally to support).
+ *
+ * Expensive: O(battles) ranking calls. Cache TTL is intentionally long.
+ */
+export async function getFederationSupportData(
+  period: Period,
+): Promise<FederationSupportResponse> {
+  const allianceId = await resolveAllianceId()
+  if (!allianceId) {
+    throw createError({
+      statusCode: 404,
+      statusMessage: `Alliance "${FEDERATION_NAME}" not found`,
+    })
+  }
+
+  const cacheKey = `fedSupport:${period}`
+  const { data, fromCache } = await swr(cacheKey, 5 * 60 * 1000, async () => {
+    const [alliance, { byId: countries }] = await Promise.all([
+      getAlliance(allianceId),
+      getCountries(),
+    ])
+    const memberSet = new Set(alliance.memberCountryIds)
+
+    const { battles, scanned } = await scanBattles(period)
+
+    // countryId → support damage
+    const support = new Map<string, number>()
+    let allyBattles = 0
+
+    for (const b of battles) {
+      const def = b.defender?.country ?? null
+      const att = b.attacker?.country ?? null
+      const defFed = def ? memberSet.has(def) : false
+      const attFed = att ? memberSet.has(att) : false
+
+      // Skip battles with no Federation involvement, and internal Fed-vs-Fed.
+      if (!defFed && !attFed) continue
+      if (defFed && attFed) continue
+
+      // The ally whose battle this is — their own DMG is excluded.
+      const owner = defFed ? def! : att!
+
+      let ranking: Map<string, number>
+      try {
+        ranking = await getBattleCountryDamage(b._id)
+      } catch {
+        // Skip a single broken battle rather than failing the whole aggregate.
+        continue
+      }
+      if (!ranking.size) continue
+      allyBattles++
+
+      for (const [cid, dmg] of ranking) {
+        if (cid === owner) continue
+        if (!memberSet.has(cid)) continue
+        support.set(cid, (support.get(cid) ?? 0) + dmg)
+      }
+    }
+
+    const byCountry: DamageRow[] = []
+    for (const [cid, dmg] of support) {
+      if (dmg <= 0) continue
+      const c = countries.get(cid)
+      byCountry.push({
+        id: cid,
+        name: c?.name ?? cid,
+        damage: dmg,
+        share: 0,
+        rank: null,
+        meta: { code: c?.code ?? null },
+      })
+    }
+    finalizeRows(byCountry)
+
+    const totalSupportDamage = byCountry.reduce((s, r) => s + r.damage, 0)
+
+    return {
+      allianceName: alliance.name,
+      totalSupportDamage,
+      byCountry,
+      battlesScanned: scanned,
+      allyBattlesCount: allyBattles,
+      period,
+      updatedAt: new Date().toISOString(),
+      fromCache: false,
+      rateLimit: getRateLimitState(),
+    }
+  })
+
+  return {
+    ...(data as FederationSupportResponse),
+    fromCache,
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 // ---------------- JUSTICE ----------------
 
 export async function getJusticeData(period: Period): Promise<JusticeResponse> {
@@ -426,7 +619,10 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
   }
 
   const cacheKey = `justice:${period}`
-  const { data, fromCache } = await swr(cacheKey, 45 * 1000, async () => {
+  // "all" = cumulative (very stable). "month" resets monthly. "week" = active.
+  const jusTtl =
+    period === 'all' ? 30 * 60 * 1000 : period === 'month' ? 5 * 60 * 1000 : 45 * 1000
+  const { data, fromCache } = await swr(cacheKey, jusTtl, async () => {
     const [mu, members, { byId: countries }] = await Promise.all([
       getJusticeMu(muId),
       getMuMembers(muId),

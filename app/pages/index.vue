@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import {
   Swords, Globe2, Users, Trophy, Shield, Layers, Activity, Crosshair,
+  HeartHandshake,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, PERIOD_LABEL } from '~/utils/format'
 
-const { period, fedPeriod, live, lastUpdated, meta, federation, justice, refresh } = useDashboard()
+const { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh } = useDashboard()
 
 const fed = computed(() => federation.data.value)
+const fedSup = computed(() => federationSupport.data.value)
 const jus = computed(() => justice.data.value)
 const fedLoading = computed(() => federation.status.value === 'pending')
+const fedSupLoading = computed(() => federationSupport.status.value === 'pending')
 const jusLoading = computed(() => justice.status.value === 'pending')
 const fedErr = computed(() => federation.error.value as (Error & { statusMessage?: string }) | null)
+const fedSupErr = computed(() => federationSupport.error.value as (Error & { statusMessage?: string }) | null)
 const jusErr = computed(() => justice.error.value as (Error & { statusMessage?: string }) | null)
 
 useHead({ title: 'WarEra DMG — The Federation & Justice' })
@@ -22,7 +26,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
       :period="period"
       :live="live"
       :last-updated="lastUpdated"
-      :loading="fedLoading || jusLoading"
+      :loading="fedLoading || fedSupLoading || jusLoading"
       :rate-limit="fed?.rateLimit ?? jus?.rateLimit ?? null"
       :meta-ok="meta.data.value?.ok ?? false"
       @update:period="period = $event"
@@ -95,6 +99,60 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
             </div>
             <div class="px-2 py-1">
               <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Ally support DMG (full width) -->
+        <div class="panel clip-corner panel-glow-fed mt-5">
+          <div class="flex items-center justify-between px-4 py-3 border-b border-white/5 gap-3 flex-wrap">
+            <div class="flex items-center gap-2 min-w-0">
+              <HeartHandshake class="h-4 w-4 text-fed-glow shrink-0" />
+              <h3 class="heading-display text-sm text-zinc-200">Ally support DMG per country</h3>
+              <span
+                class="hidden md:inline text-[11px] text-zinc-500 truncate"
+                title="DMG dealt by each Federation member in OTHER allies' battles (own battles excluded). Internal Fed-vs-Fed wars are skipped."
+              >
+                · DMG w bitwach sojuszników (własne bitwy wyłączone)
+              </span>
+            </div>
+            <div class="flex items-center gap-3 text-[10px] uppercase tracking-wider text-zinc-600">
+              <span>
+                Scanned <span class="data-mono text-zinc-400">{{ fedSup?.battlesScanned ?? '…' }}</span>
+              </span>
+              <span>
+                Ally battles <span class="data-mono text-zinc-400">{{ fedSup?.allyBattlesCount ?? '…' }}</span>
+              </span>
+              <span>{{ PERIOD_LABEL[fedPeriod] }}</span>
+            </div>
+          </div>
+
+          <div v-if="fedSupErr" class="px-4 py-3 border-b border-danger/20">
+            <p class="text-sm text-danger">Failed to load ally support: {{ fedSupErr.statusMessage || fedSupErr.message }}</p>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x divide-white/5">
+            <!-- Total support KPI -->
+            <div class="px-4 py-4 flex flex-col justify-center">
+              <p class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold">Total Support DMG</p>
+              <p class="mt-1 text-2xl sm:text-3xl data-mono font-bold text-fed-glow">
+                {{ fedSup ? formatFull(fedSup.totalSupportDamage) : '…' }}
+              </p>
+              <p class="mt-1 text-xs text-zinc-500">
+                {{ fedSup ? formatDamage(fedSup.totalSupportDamage) : '—' }} ·
+                {{ fedSup?.byCountry?.length ?? 0 }} contributors
+              </p>
+            </div>
+
+            <!-- Ranking table -->
+            <div class="lg:col-span-2 px-2 py-1">
+              <DamageTable
+                :rows="fedSup?.byCountry ?? []"
+                :loading="fedSupLoading"
+                accent="fed"
+                show-flag
+                :limit="50"
+              />
             </div>
           </div>
         </div>
@@ -172,7 +230,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
 
       <footer class="pt-4 pb-8 text-center text-[11px] text-zinc-600">
         Data: <span class="data-mono">api2.warera.io</span> · auto-refresh 60 s ·
-        <span v-if="fed?.fromCache || jus?.fromCache">cache</span><span v-else>live</span>
+        <span v-if="fed?.fromCache || fedSup?.fromCache || jus?.fromCache">cache</span><span v-else>live</span>
       </footer>
     </main>
   </div>

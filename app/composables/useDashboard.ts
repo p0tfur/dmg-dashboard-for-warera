@@ -1,4 +1,10 @@
-import type { FederationResponse, JusticeResponse, MetaResponse, Period } from '~~/shared/types/warera'
+import type {
+  FederationResponse,
+  FederationSupportResponse,
+  JusticeResponse,
+  MetaResponse,
+  Period,
+} from '~~/shared/types/warera'
 
 const PERIODS: Period[] = ['week', 'month', 'all']
 const REFRESH_MS = 60_000
@@ -22,6 +28,16 @@ export function useDashboard() {
     watch: [fedPeriod],
   })
 
+  const federationSupport = useFetch<FederationSupportResponse | null>(
+    '/api/federationSupport',
+    {
+      key: 'federationSupport',
+      query: { period: fedPeriod },
+      default: () => null,
+      watch: [fedPeriod],
+    },
+  )
+
   const justice = useFetch<JusticeResponse | null>('/api/justice', {
     key: 'justice',
     query: { period },
@@ -30,7 +46,12 @@ export function useDashboard() {
   })
 
   async function refresh() {
-    await Promise.all([meta.refresh(), federation.refresh(), justice.refresh()])
+    await Promise.all([
+      meta.refresh(),
+      federation.refresh(),
+      federationSupport.refresh(),
+      justice.refresh(),
+    ])
     lastUpdated.value = new Date().toISOString()
   }
 
@@ -46,7 +67,7 @@ export function useDashboard() {
     if (timer) clearInterval(timer)
   })
 
-  return { period, fedPeriod, live, lastUpdated, meta, federation, justice, refresh }
+  return { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh }
 }
 
 export { PERIODS }
