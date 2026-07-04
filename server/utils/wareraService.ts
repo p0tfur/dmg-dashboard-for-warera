@@ -557,19 +557,31 @@ function emptySupport(period: Period, building = true): FederationSupportRespons
 
 /** Builds the support aggregate and stores it in the cache. */
 async function buildSupportCache(period: Period): Promise<void> {
-  const allianceId = await resolveAllianceId()
-  if (!allianceId) return
+  const startedAt = Date.now()
+  try {
+    console.log(`[warera] support scan start (period=${period})`)
+    const allianceId = await resolveAllianceId()
+    if (!allianceId) {
+      console.warn(`[warera] support scan aborted: alliance not found`)
+      return
+    }
 
-  const [alliance, { byId: countries }] = await Promise.all([
-    getAlliance(allianceId),
-    getCountries(),
-  ])
-  const memberSet = new Set(alliance.memberCountryIds)
+    const [alliance, { byId: countries }] = await Promise.all([
+      getAlliance(allianceId),
+      getCountries(),
+    ])
+    const memberSet = new Set(alliance.memberCountryIds)
+    console.log(
+      `[warera] support scan: ${alliance.memberCountryIds.length} countries to scan`,
+    )
 
-  const { battles, scanned } = await scanFederationBattles(
-    alliance.memberCountryIds,
-    period,
-  )
+    const { battles, scanned } = await scanFederationBattles(
+      alliance.memberCountryIds,
+      period,
+    )
+    console.log(
+      `[warera] support scan: ${battles.length} unique battles (${scanned} raw)`,
+    )
 
   const support = new Map<string, number>()
   const own = new Map<string, number>()
@@ -648,6 +660,18 @@ async function buildSupportCache(period: Period): Promise<void> {
     data,
     expiresAt: Date.now() + SUPPORT_TTL,
   })
+  console.log(
+    `[warera] support scan done in ${Math.round((Date.now() - startedAt) / 1000)}s: ` +
+      `${byCountry.length} countries, ${allyBattles} ally battles, ` +
+      `${data.totalSupportDamage} total support DMG`,
+  )
+  } catch (err) {
+    console.error(
+      `[warera] support scan FAILED after ${Math.round((Date.now() - startedAt) / 1000)}s:`,
+      (err as Error)?.message ?? err,
+    )
+    throw err
+  }
 }
 
 /**
