@@ -156,6 +156,8 @@ export interface FederationResponse {
   periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
+  dataSource?: 'api' | 'db' | 'mixed'
+  syncLagSeconds?: number | null
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 
@@ -176,6 +178,8 @@ export interface FederationSupportResponse {
   periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
+  dataSource?: 'api' | 'db' | 'mixed'
+  syncLagSeconds?: number | null
   /**
    * True when the aggregate is still being built in the background (the
    * expensive per-country scan can take minutes for "all"). The frontend
@@ -199,6 +203,8 @@ export interface JusticeResponse {
   periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
+  dataSource?: 'api' | 'db' | 'mixed'
+  syncLagSeconds?: number | null
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 
@@ -214,6 +220,8 @@ export interface JusticePlayerDailyResponse {
   battlesScanned: number
   updatedAt: string
   fromCache: boolean
+  dataSource?: 'api' | 'db' | 'mixed'
+  syncLagSeconds?: number | null
   building?: boolean
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }

@@ -11,6 +11,7 @@ export default defineNuxtConfig({
     //  so Coolify/runtime env vars work without rebuilding the image.)
     wareraApiKey: '',
     wareraBaseUrl: 'https://api2.warera.io/trpc',
+    databaseUrl: '',
   },
   app: {
     head: {

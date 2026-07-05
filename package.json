@@ -13,7 +13,9 @@
   "dependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",
     "lucide-vue-next": "^0.460.0",
+    "mysql2": "^3.22.5",
     "nuxt": "^4.4.8",
+    "safer-buffer": "^2.1.2",
     "vue": "^3.5.38",
     "vue-router": "^5.1.0"
   },

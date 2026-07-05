@@ -1,4 +1,12 @@
 import { trpcGet, getRateLimitState, waitForBudget } from './wareraClient'
+import {
+  getDbFederation,
+  getDbFederationSupport,
+  getDbJustice,
+  getDbJusticePlayerDaily,
+  getSyncFreshness,
+} from './wareraRepository'
+import { ensureWareraDbSyncStarted } from './wareraSync'
 import type {
   DailyDamagePoint,
   DamageRow,
@@ -404,6 +412,29 @@ async function resolveMuId(): Promise<string | null> {
 // ---------------- FEDERATION ----------------
 
 export async function getFederationData(period: Period): Promise<FederationResponse> {
+  ensureWareraDbSyncStarted()
+  const dbData = await getDbFederation(period)
+  if (dbData && (dbData.byCountry.length || dbData.byMu.length)) {
+    const freshness = await getSyncFreshness('references')
+    return {
+      allianceName: dbData.allianceName,
+      avatarUrl: dbData.avatarUrl,
+      totalDamage: dbData.totalDamage,
+      globalRank: dbData.globalRank,
+      memberCountryCount: dbData.memberCountryCount,
+      muCount: dbData.byMu.length,
+      byCountry: dbData.byCountry,
+      byMu: dbData.byMu,
+      period,
+      updatedAt: dbData.updatedAt ?? new Date().toISOString(),
+      fromCache: false,
+      dataSource: 'db',
+      syncLagSeconds: freshness.lagSeconds,
+      periodRange: computePeriodRange(period, await getGameDates()),
+      rateLimit: getRateLimitState(),
+    }
+  }
+
   const allianceId = await resolveAllianceId()
   if (!allianceId) {
     throw createError({
@@ -635,6 +666,7 @@ function emptySupport(period: Period, building = true): FederationSupportRespons
     fromCache: false,
     building,
     rateLimit: getRateLimitState(),
+    dataSource: 'api',
   }
 }
 
@@ -767,6 +799,27 @@ async function buildSupportCache(period: Period): Promise<void> {
 export async function getFederationSupportData(
   period: Period,
 ): Promise<FederationSupportResponse> {
+  ensureWareraDbSyncStarted()
+  const dbData = await getDbFederationSupport(period)
+  if (dbData && dbData.battlesScanned > 0) {
+    const freshness = await getSyncFreshness('federation-battles')
+    return {
+      allianceName: FEDERATION_NAME,
+      totalSupportDamage: dbData.totalSupportDamage,
+      byCountry: dbData.byCountry,
+      battlesScanned: dbData.battlesScanned,
+      allyBattlesCount: dbData.allyBattlesCount,
+      period,
+      updatedAt: dbData.updatedAt ?? new Date().toISOString(),
+      fromCache: false,
+      building: false,
+      dataSource: 'db',
+      syncLagSeconds: freshness.lagSeconds,
+      periodRange: computePeriodRange(period, await getGameDates()),
+      rateLimit: getRateLimitState(),
+    }
+  }
+
   const entry = supportCache.get(period)
   const now = Date.now()
   // Range is computed up front (cheap, SWR-cached) so all return paths can
@@ -808,12 +861,35 @@ export async function getFederationSupportData(
 // ---------------- JUSTICE ----------------
 
 export async function getJusticeData(period: Period): Promise<JusticeResponse> {
+  ensureWareraDbSyncStarted()
   const muId = await resolveMuId()
   if (!muId) {
     throw createError({
       statusCode: 404,
       statusMessage: `Military Unit "${JUSTICE_NAME}" not found`,
     })
+  }
+
+  const dbData = await getDbJustice(muId, period)
+  if (dbData && dbData.byPlayer.length) {
+    const freshness = await getSyncFreshness('justice-members')
+    return {
+      muName: dbData.muName,
+      avatarUrl: dbData.avatarUrl,
+      totalDamage: dbData.totalDamage,
+      globalRank: dbData.globalRank,
+      memberCount: dbData.memberCount,
+      level: dbData.level,
+      byCountry: dbData.byCountry,
+      byPlayer: dbData.byPlayer,
+      period,
+      updatedAt: dbData.updatedAt ?? new Date().toISOString(),
+      fromCache: false,
+      dataSource: 'db',
+      syncLagSeconds: freshness.lagSeconds,
+      periodRange: computePeriodRange(period, await getGameDates()),
+      rateLimit: getRateLimitState(),
+    }
   }
 
   const cacheKey = `justice:${period}`
@@ -1052,6 +1128,7 @@ async function buildJusticePlayerDailyData(
     fromCache: false,
     building: false,
     rateLimit: getRateLimitState(),
+    dataSource: 'api',
   }
 }
 
@@ -1094,7 +1171,30 @@ export async function getJusticePlayerDaily(
   userId: string,
   days = 7,
 ): Promise<JusticePlayerDailyResponse> {
+  ensureWareraDbSyncStarted()
   const safeDays = Math.min(Math.max(Math.floor(days || 7), 1), 7)
+  const dbData = await getDbJusticePlayerDaily(userId, safeDays)
+  if (dbData && dbData.battlesScanned > 0) {
+    const freshness = await getSyncFreshness('justice-user-battles')
+    return {
+      userId,
+      playerName: dbData.playerName,
+      avatarUrl: dbData.avatarUrl,
+      countryId: dbData.countryId,
+      countryName: dbData.countryName,
+      days: dbData.days,
+      totalDamage: dbData.totalDamage,
+      daysRequested: safeDays,
+      battlesScanned: dbData.battlesScanned,
+      updatedAt: dbData.updatedAt ?? new Date().toISOString(),
+      fromCache: false,
+      building: false,
+      dataSource: 'db',
+      syncLagSeconds: freshness.lagSeconds,
+      rateLimit: getRateLimitState(),
+    }
+  }
+
   const key = `${userId}:${safeDays}`
   const entry = justicePlayerDailyCache.get(key)
   const now = Date.now()
