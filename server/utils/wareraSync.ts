@@ -5,6 +5,7 @@ import {
   markSyncSuccess,
   needsBattleDetailsSync,
   needsUserProfileEnrichment,
+  recordCitizenshipSnapshot,
   upsertAlliance,
   upsertBattle,
   upsertBattleRankings,
@@ -152,6 +153,31 @@ function mapUser(userId: string, raw: any): UserSnapshot {
   }
 }
 
+/**
+ * Pulls `dates.lastCitizenshipChangeAt` out of a raw user profile. The game
+ * exposes only this single marker (no full citizenship history), so we treat
+ * it as "the country changed to the current one at this UTC timestamp".
+ */
+function extractLastCitizenshipChangeAt(raw: any): string | null {
+  const dates = raw?.dates ?? {}
+  return (
+    dates?.lastCitizenshipChangeAt
+    ?? dates?.last_citizenship_change_at
+    ?? null
+  )
+}
+
+/**
+ * Lightweight per-user context used by the battle-ranking attribution pass:
+ *   • currentCountry   — `user.country` from the latest profile
+ *   • lastChangeAt     — `dates.lastCitizenshipChangeAt` (game-side marker)
+ */
+interface UserContextEntry {
+  currentCountry: string | null
+  lastChangeAt: string | null
+}
+type UserContext = Map<string, UserContextEntry>
+
 function mapBattle(raw: BattleListItem): BattleSnapshot | null {
   if (!raw?._id) return null
   return {
@@ -246,7 +272,7 @@ async function syncAllMus(): Promise<void> {
   await upsertMus(out)
 }
 
-async function syncJusticeMembers(muId: string): Promise<string[]> {
+async function syncJusticeMembers(muId: string): Promise<{ userIds: string[]; userContext: UserContext }> {
   const raw = await trpcGet<any>('muMember.getByMu', { muId })
   const members: MuMemberSnapshot[] = asArray<any>(raw).map((m) => ({
     muId,
@@ -262,6 +288,7 @@ async function syncJusticeMembers(muId: string): Promise<string[]> {
   await upsertMuMembers(members)
 
   const users: UserSnapshot[] = []
+  const userContext: UserContext = new Map()
   for (const member of members) {
     await waitForBudget(20)
     try {
@@ -272,25 +299,39 @@ async function syncJusticeMembers(muId: string): Promise<string[]> {
         1,
       )
       users.push(mapUser(member.userId, rawUser))
+
+      const country = rawUser?.country ?? rawUser?.citizenship ?? rawUser?.countryId ?? null
+      const lastChangeAt = extractLastCitizenshipChangeAt(rawUser)
+      userContext.set(member.userId, { currentCountry: country, lastChangeAt })
+
+      // Append-only citizenship snapshot: only records a new row when the
+      // country actually changes vs. the previous open entry.
+      if (country) {
+        await recordCitizenshipSnapshot({
+          userId: member.userId,
+          countryId: country,
+          lastChangeAt,
+        })
+      }
     } catch {
       users.push({ id: member.userId, name: member.userId, avatarUrl: null, country: null })
     }
   }
   await upsertUsers(users)
-  return members.map((member) => member.userId)
+  return { userIds: members.map((member) => member.userId), userContext }
 }
 
-async function syncBattleRankings(battleId: string): Promise<void> {
+async function syncBattleRankings(battleId: string, battleEndedAt: string | null, userContext?: UserContext): Promise<void> {
   const requests: Array<Promise<BattleRankingSnapshot[]>> = [
-    fetchBattleRankings(battleId, 'country', 'merged'),
-    fetchBattleRankings(battleId, 'country', 'attacker'),
-    fetchBattleRankings(battleId, 'country', 'defender'),
-    fetchBattleRankings(battleId, 'user', 'merged'),
-    fetchBattleRankings(battleId, 'user', 'attacker'),
-    fetchBattleRankings(battleId, 'user', 'defender'),
-    fetchBattleRankings(battleId, 'mu', 'merged'),
-    fetchBattleRankings(battleId, 'mu', 'attacker'),
-    fetchBattleRankings(battleId, 'mu', 'defender'),
+    fetchBattleRankings(battleId, 'country', 'merged', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'country', 'attacker', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'country', 'defender', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'user', 'merged', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'user', 'attacker', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'user', 'defender', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'mu', 'merged', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'mu', 'attacker', battleEndedAt, userContext),
+    fetchBattleRankings(battleId, 'mu', 'defender', battleEndedAt, userContext),
   ]
   const rankings = (await Promise.all(requests)).flat()
   await upsertBattleRankings(rankings)
@@ -300,6 +341,8 @@ async function fetchBattleRankings(
   battleId: string,
   entityType: 'user' | 'country' | 'mu',
   side: 'attacker' | 'defender' | 'merged',
+  battleEndedAt?: string | null,
+  userContext?: UserContext,
 ): Promise<BattleRankingSnapshot[]> {
   await waitForBudget(15)
   const raw = await trpcGet<any>('battleRanking.getRanking', {
@@ -312,13 +355,49 @@ async function fetchBattleRankings(
   return asArray<any>(raw).map((item) => {
     const entityId = item?.[entityType] ?? item?.entityId
     if (!entityId) return null
+
+    // Compute attribution for user-type entries only.
+    // The API never returns a country field on user rankings, so we derive
+    // attributedCountryId and attributionConfidence from the citizenship
+    // context collected during syncJusticeMembers.
+    let attributedCountryId: string | null = null
+    let attributionConfidence: 'certain' | 'probable' | 'unknown' = 'unknown'
+
+    if (entityType === 'user' && userContext) {
+      const context = userContext.get(entityId)
+      if (context?.currentCountry) {
+        const refTs = battleEndedAt ? Date.parse(battleEndedAt) : NaN
+        const changeTs = context.lastChangeAt ? Date.parse(context.lastChangeAt) : NaN
+        if (Number.isFinite(refTs) && Number.isFinite(changeTs)) {
+          if (refTs >= changeTs) {
+            // Battle ended after the last citizenship change → assume current country.
+            attributedCountryId = context.currentCountry
+            attributionConfidence = 'certain'
+          } else {
+            // Battle ended before the last citizenship change → the user was
+            // likely a citizen of a different country (the previous one in
+            // the citizenship history, if known). We set 'unknown' here;
+            // a future enrichment pass may promote to 'probable'.
+            //
+            // NOTE: We do NOT try to look up the previous country yet because
+            // at this point we may not have recorded it. The citizenship
+            // history table is append-only and snapshots accumulate over time.
+            attributionConfidence = 'unknown'
+          }
+        } else {
+          // We have a current country but no reliable timestamps.
+          attributedCountryId = context.currentCountry
+          attributionConfidence = 'unknown'
+        }
+      }
+    }
+
     return {
       battleId,
       entityType,
       entityId,
-      attributedCountryId: entityType === 'user'
-        ? item?.country_id ?? item?.countryId ?? item?.country ?? null
-        : null,
+      attributedCountryId,
+      attributionConfidence,
       side,
       damage: Number(item?.value ?? 0),
       rank: item?.rank ?? null,
@@ -327,7 +406,7 @@ async function fetchBattleRankings(
   }).filter((item): item is BattleRankingSnapshot => Boolean(item))
 }
 
-async function scanFederationBattles(memberCountryIds: string[]): Promise<void> {
+async function scanFederationBattles(memberCountryIds: string[], userContext: UserContext): Promise<void> {
   const checkpoint = await getSyncCheckpoint('federation-battles')
   let newestSeen: string | null = null
 
@@ -357,7 +436,7 @@ async function scanFederationBattles(memberCountryIds: string[]): Promise<void> 
           if (await needsBattleDetailsSync(battle.id)) {
             await syncBattleDetails(battle.id)
           }
-          await syncBattleRankings(battle.id)
+          await syncBattleRankings(battle.id, battle.endedAt, userContext)
         }
 
         cursor = raw?.nextCursor ?? undefined
@@ -402,7 +481,7 @@ export async function runWareraDbSyncOnce(): Promise<void> {
       await markSyncSuccess('references')
     }
 
-    const userIds = await syncJusticeMembers(justiceMuId)
+    const { userIds: _userIds, userContext } = await syncJusticeMembers(justiceMuId)
     await markSyncSuccess('justice-members')
 
     if (!alliance) {
@@ -410,11 +489,13 @@ export async function runWareraDbSyncOnce(): Promise<void> {
       alliance = mapAlliance(rawAlliance, allianceId)
       await upsertAlliance(alliance)
     }
-    await scanFederationBattles(alliance.memberCountryIds)
+    await scanFederationBattles(alliance.memberCountryIds, userContext)
 
-    // Justice daily charts need user-level rankings; Federation battle sync already
-    // captures most member activity, but this small pass fills gaps for active members.
-    await syncJusticeUserBattles(userIds)
+    // Justice daily charts need user-level battle rankings. Instead of
+    // fetching per-user (which would re-request the same MU battles N times),
+    // we fetch Justice MU battles once and sync rankings, passing userContext
+    // so attribution confidence is computed on the fly.
+    await syncJusticeMuBattles(justiceMuId, userContext)
   } catch (err) {
     await markSyncFailure('main', err)
   } finally {
@@ -422,43 +503,51 @@ export async function runWareraDbSyncOnce(): Promise<void> {
   }
 }
 
-async function syncJusticeUserBattles(userIds: string[]): Promise<void> {
+/**
+ * Syncs recent (7-day) battles for a MU, validates that a tracked user
+ * actually participated via battleRankings, and records the battle+rankings.
+ *
+ * Replaces the old per-user scan (`syncJusticeUserBattles`) which duplicated
+ * MU-level battle lists for every member.
+ */
+async function syncJusticeMuBattles(muId: string, userContext: UserContext): Promise<void> {
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
-  for (const userId of userIds) {
-    let cursor: string | undefined
-    let guard = 0
-    while (guard < 3) {
-      await waitForBudget(15)
-      const raw = await trpcGet<any>('battle.getBattles', {
-        userId,
-        isActive: false,
-        limit: 100,
-        direction: 'backward',
-        cursor,
-      }, 1)
-      const items = asArray<BattleListItem>(raw?.items ? raw : raw)
-      if (!items.length) break
-      let hitCutoff = false
-      for (const item of items) {
-        const refIso = item.endedAt ?? item.createdAt ?? null
-        const refTs = refIso ? Date.parse(refIso) : NaN
-        if (Number.isFinite(refTs) && refTs < cutoff) {
-          hitCutoff = true
-          break
-        }
-        const battle = mapBattle(item)
-        if (!battle) continue
-        await upsertBattle(battle)
-        if (await needsBattleDetailsSync(battle.id)) {
-          await syncBattleDetails(battle.id)
-        }
-        await syncBattleRankings(battle.id)
+  // Fetch battles once per MU (not per-user), same 3-page window as before.
+  let cursor: string | undefined
+  let guard = 0
+  while (guard < 3) {
+    await waitForBudget(15)
+    const raw = await trpcGet<any>('battle.getBattles', {
+      muId,
+      isActive: false,
+      limit: 100,
+      direction: 'backward',
+      cursor,
+    }, 1)
+    const items = asArray<BattleListItem>(raw?.items ? raw : raw)
+    if (!items.length) break
+
+    let hitCutoff = false
+    for (const item of items) {
+      const refIso = item.endedAt ?? item.createdAt ?? null
+      const refTs = refIso ? Date.parse(refIso) : NaN
+      if (Number.isFinite(refTs) && refTs < cutoff) {
+        hitCutoff = true
+        break
       }
-      if (hitCutoff) break
-      cursor = raw?.nextCursor ?? undefined
-      if (!cursor) break
-      guard++
+      const battle = mapBattle(item)
+      if (!battle) continue
+      await upsertBattle(battle)
+      if (await needsBattleDetailsSync(battle.id)) {
+        await syncBattleDetails(battle.id)
+      }
+      // Pass userContext so attribution confidence is populated for known users.
+      await syncBattleRankings(battle.id, battle.endedAt, userContext)
     }
+    if (hitCutoff) break
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+    guard++
   }
   await markSyncSuccess('justice-user-battles')
 }

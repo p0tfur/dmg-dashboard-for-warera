@@ -98,15 +98,32 @@ export interface BattleSnapshot {
   raw?: unknown
 }
 
+export type AttributionConfidence = 'certain' | 'probable' | 'unknown'
+
 export interface BattleRankingSnapshot {
   battleId: string
   entityType: 'user' | 'country' | 'mu'
   entityId: string
   attributedCountryId?: string | null
+  attributionConfidence?: AttributionConfidence
   side: 'attacker' | 'defender' | 'merged'
   damage: number
   rank: number | null
   raw?: unknown
+}
+
+/** Single row of the append-only citizenship history. */
+export interface CitizenshipHistoryEntry {
+  userId: string
+  countryId: string
+  /** Inclusive UTC timestamp; the country is treated as valid starting here. */
+  validFrom: string
+  /** Exclusive UTC timestamp; null means the entry is currently open. */
+  validTo: string | null
+  source: 'profile' | 'inferred'
+  confidence: 'certain' | 'probable'
+  /** Game-side marker (`dates.lastCitizenshipChangeAt`) for when it took effect. */
+  lastChangeAt: string | null
 }
 
 export interface DbFreshness {
@@ -369,16 +386,19 @@ export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): P
     for (const r of rankings) {
       await db.execute(
         `INSERT INTO warera_battle_rankings
-         (battle_id, entity_type, entity_id, attributed_country_id, side, damage, ranking_position, raw_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         (battle_id, entity_type, entity_id, attributed_country_id, attribution_confidence,
+          side, damage, ranking_position, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE damage = VALUES(damage), ranking_position = VALUES(ranking_position),
            attributed_country_id = COALESCE(VALUES(attributed_country_id), attributed_country_id),
+           attribution_confidence = VALUES(attribution_confidence),
            raw_json = VALUES(raw_json)`,
         [
           r.battleId,
           r.entityType,
           r.entityId,
           r.attributedCountryId ?? null,
+          r.attributionConfidence ?? 'unknown',
           r.side,
           r.damage,
           r.rank,
@@ -908,6 +928,112 @@ export async function getDbJusticePlayerDaily(userId: string, days: number): Pro
       battlesScanned: Number(freshness[0]?.battles_scanned ?? 0),
       updatedAt: fromMysqlDate(freshness[0]?.updated_at),
     }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Citizenship history (append-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the country the user most likely held citizenship of at the given
+ * UTC timestamp, based on the append-only history table. Used by the sync
+ * layer to set `attributed_country_id` / `attribution_confidence` on battle
+ * rankings. Returns null when the user has no recorded history at that time.
+ */
+export async function getCitizenshipAtTime(
+  userId: string,
+  isoDate: string,
+): Promise<{ countryId: string; confidence: 'certain' | 'probable' } | null> {
+  const result = await withWareraDb('getCitizenshipAtTime', async (db) => {
+    const [rows] = await db.execute<DbRow<{
+      country_id: string
+      confidence: 'certain' | 'probable'
+    }>[]>(
+      `SELECT country_id, confidence FROM warera_user_citizenship_history
+       WHERE user_id = ? AND valid_from <= ?
+         AND (valid_to IS NULL OR valid_to > ?)
+       ORDER BY valid_from DESC LIMIT 1`,
+      [userId, toMysqlDate(isoDate), toMysqlDate(isoDate)],
+    )
+    return rows[0]
+      ? { countryId: rows[0].country_id, confidence: rows[0].confidence }
+      : null
+  })
+  return result ?? null
+}
+
+/**
+ * Append-only upsert for citizenship history.
+ *
+ * Logic:
+ *   • If the user already has an OPEN entry with the same country_id → refresh
+ *     `last_change_at` only (no new row).
+ *   • If the user has an OPEN entry with a DIFFERENT country_id → close it
+ *     (valid_to = validFrom of new entry) and insert a new OPEN entry.
+ *   • If no open entry → insert a new OPEN entry.
+ *
+ * `validFrom` should be the moment we observed the change (now). Pass the
+ * game-side `lastCitizenshipChangeAt` as `lastChangeAt` for traceability.
+ */
+export async function recordCitizenshipSnapshot(args: {
+  userId: string
+  countryId: string
+  validFrom?: string
+  lastChangeAt?: string | null
+  source?: 'profile' | 'inferred'
+  confidence?: 'certain' | 'probable'
+}): Promise<void> {
+  const {
+    userId,
+    countryId,
+    validFrom = new Date().toISOString(),
+    lastChangeAt = null,
+    source = 'profile',
+    confidence = 'certain',
+  } = args
+  if (!countryId) return
+
+  await withWareraDb('recordCitizenshipSnapshot', async (db) => {
+    const validFromMysql = toMysqlDate(validFrom)
+    const lastChangeMysql = toMysqlDate(lastChangeAt)
+
+    const [open] = await db.execute<DbRow<{ country_id: string; valid_from: string }>[]> (
+      `SELECT country_id, valid_from FROM warera_user_citizenship_history
+       WHERE user_id = ? AND valid_to IS NULL ORDER BY valid_from DESC LIMIT 1`,
+      [userId],
+    )
+    const openRow = open[0]
+
+    if (openRow && openRow.country_id === countryId) {
+      // Same country — just refresh last_change_at marker if a newer one arrived.
+      if (lastChangeMysql) {
+        await db.execute(
+          `UPDATE warera_user_citizenship_history
+             SET last_change_at = COALESCE(?, last_change_at)
+           WHERE user_id = ? AND valid_from = ?`,
+          [lastChangeMysql, userId, openRow.valid_from],
+        )
+      }
+      return
+    }
+
+    // Close the previous open entry at the new entry's start, then insert.
+    if (openRow) {
+      await db.execute(
+        `UPDATE warera_user_citizenship_history
+            SET valid_to = ?
+          WHERE user_id = ? AND valid_from = ?`,
+        [validFromMysql, userId, openRow.valid_from],
+      )
+    }
+
+    await db.execute(
+      `INSERT INTO warera_user_citizenship_history
+         (user_id, country_id, valid_from, valid_to, source, confidence, last_change_at)
+       VALUES (?, ?, ?, NULL, ?, ?, ?)`,
+      [userId, countryId, validFromMysql, source, confidence, lastChangeMysql],
+    )
   })
 }
 
