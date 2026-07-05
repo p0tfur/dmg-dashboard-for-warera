@@ -54,14 +54,45 @@ export interface UserSnapshot {
   name: string
   avatarUrl: string | null
   country: string | null
+  muId?: string | null
+  isActive?: boolean | null
+  militaryRank?: number | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  level?: number | null
+  totalXp?: number | null
+  totalDamages?: number | null
+  weeklyDamage?: number | null
+  totalDamageRank?: number | null
+  weeklyDamageRank?: number | null
+  dates?: unknown
+  stats?: unknown
+  rankings?: unknown
+  skills?: unknown
+  infos?: unknown
+  fullRaw?: unknown
   raw?: unknown
 }
 
 export interface BattleSnapshot {
   id: string
+  warId?: string | null
+  regionId?: string | null
   isActive: boolean
   attackerCountryId: string | null
   defenderCountryId: string | null
+  winnerCountryId?: string | null
+  attackerScore?: number | null
+  defenderScore?: number | null
+  attackerDamage?: number | null
+  defenderDamage?: number | null
+  currentRound?: unknown
+  rounds?: unknown
+  roundsHistory?: unknown
+  battleType?: string | null
+  totalRounds?: number | null
+  roundsToWin?: number | null
+  detailsRaw?: unknown
   createdAt: string | null
   endedAt: string | null
   raw?: unknown
@@ -210,11 +241,61 @@ export async function upsertUsers(users: UserSnapshot[]): Promise<void> {
   await withWareraDbConnection('upsertUsers', async (db) => {
     for (const u of users) {
       await db.execute(
-        `INSERT INTO warera_users (user_id, username, avatar_url, country_id, raw_json)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO warera_users
+         (user_id, username, avatar_url, country_id, mu_id, is_active, military_rank,
+          game_created_at, game_updated_at, level, total_xp, total_damages, weekly_damage,
+          total_damage_rank, weekly_damage_rank, raw_json, dates_json, stats_json,
+          rankings_json, skills_json, infos_json, full_profile_json, full_synced_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          CASE WHEN ? IS NULL THEN NULL ELSE UTC_TIMESTAMP(3) END)
          ON DUPLICATE KEY UPDATE username = VALUES(username), avatar_url = VALUES(avatar_url),
-           country_id = VALUES(country_id), raw_json = VALUES(raw_json)`,
-        [u.id, u.name, u.avatarUrl, u.country, jsonParam(u.raw)],
+           country_id = VALUES(country_id), mu_id = COALESCE(VALUES(mu_id), mu_id),
+           is_active = COALESCE(VALUES(is_active), is_active),
+           military_rank = COALESCE(VALUES(military_rank), military_rank),
+           game_created_at = COALESCE(VALUES(game_created_at), game_created_at),
+           game_updated_at = COALESCE(VALUES(game_updated_at), game_updated_at),
+           level = COALESCE(VALUES(level), level),
+           total_xp = COALESCE(VALUES(total_xp), total_xp),
+           total_damages = COALESCE(VALUES(total_damages), total_damages),
+           weekly_damage = COALESCE(VALUES(weekly_damage), weekly_damage),
+           total_damage_rank = COALESCE(VALUES(total_damage_rank), total_damage_rank),
+           weekly_damage_rank = COALESCE(VALUES(weekly_damage_rank), weekly_damage_rank),
+           raw_json = VALUES(raw_json),
+           dates_json = COALESCE(VALUES(dates_json), dates_json),
+           stats_json = COALESCE(VALUES(stats_json), stats_json),
+           rankings_json = COALESCE(VALUES(rankings_json), rankings_json),
+           skills_json = COALESCE(VALUES(skills_json), skills_json),
+           infos_json = COALESCE(VALUES(infos_json), infos_json),
+           full_profile_json = COALESCE(VALUES(full_profile_json), full_profile_json),
+           full_synced_at = CASE
+             WHEN VALUES(full_profile_json) IS NULL THEN full_synced_at
+             ELSE UTC_TIMESTAMP(3)
+           END`,
+        [
+          u.id,
+          u.name,
+          u.avatarUrl,
+          u.country,
+          u.muId ?? null,
+          u.isActive === undefined || u.isActive === null ? null : (u.isActive ? 1 : 0),
+          u.militaryRank ?? null,
+          toMysqlDate(u.createdAt),
+          toMysqlDate(u.updatedAt),
+          u.level ?? null,
+          u.totalXp ?? null,
+          u.totalDamages ?? null,
+          u.weeklyDamage ?? null,
+          u.totalDamageRank ?? null,
+          u.weeklyDamageRank ?? null,
+          jsonParam(u.raw),
+          jsonParam(u.dates),
+          jsonParam(u.stats),
+          jsonParam(u.rankings),
+          jsonParam(u.skills),
+          jsonParam(u.infos),
+          jsonParam(u.fullRaw),
+          jsonParam(u.fullRaw),
+        ],
       )
     }
   })
@@ -224,19 +305,57 @@ export async function upsertBattle(battle: BattleSnapshot): Promise<boolean | nu
   return withWareraDb('upsertBattle', async (db) => {
     const [result] = await db.execute<ResultSetHeader>(
       `INSERT INTO warera_battles
-       (battle_id, is_active, attacker_country_id, defender_country_id, created_at, ended_at, raw_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE is_active = VALUES(is_active),
-         attacker_country_id = VALUES(attacker_country_id), defender_country_id = VALUES(defender_country_id),
-         created_at = VALUES(created_at), ended_at = VALUES(ended_at), raw_json = VALUES(raw_json)`,
+       (battle_id, war_id, region_id, is_active, attacker_country_id, defender_country_id, winner_country_id,
+        attacker_score, defender_score, attacker_damage, defender_damage, current_round_json,
+        rounds_json, rounds_history_json, battle_type, total_rounds, rounds_to_win,
+        created_at, ended_at, raw_json, details_json, details_synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        CASE WHEN ? IS NULL THEN NULL ELSE UTC_TIMESTAMP(3) END)
+       ON DUPLICATE KEY UPDATE war_id = COALESCE(VALUES(war_id), war_id),
+         region_id = COALESCE(VALUES(region_id), region_id),
+         is_active = VALUES(is_active),
+         attacker_country_id = VALUES(attacker_country_id),
+         defender_country_id = VALUES(defender_country_id),
+         winner_country_id = COALESCE(VALUES(winner_country_id), winner_country_id),
+         attacker_score = COALESCE(VALUES(attacker_score), attacker_score),
+         defender_score = COALESCE(VALUES(defender_score), defender_score),
+         attacker_damage = COALESCE(VALUES(attacker_damage), attacker_damage),
+         defender_damage = COALESCE(VALUES(defender_damage), defender_damage),
+         current_round_json = COALESCE(VALUES(current_round_json), current_round_json),
+         rounds_json = COALESCE(VALUES(rounds_json), rounds_json),
+         rounds_history_json = COALESCE(VALUES(rounds_history_json), rounds_history_json),
+         battle_type = COALESCE(VALUES(battle_type), battle_type),
+         total_rounds = COALESCE(VALUES(total_rounds), total_rounds),
+         rounds_to_win = COALESCE(VALUES(rounds_to_win), rounds_to_win),
+         created_at = VALUES(created_at), ended_at = VALUES(ended_at), raw_json = VALUES(raw_json),
+         details_json = COALESCE(VALUES(details_json), details_json),
+         details_synced_at = CASE
+           WHEN VALUES(details_json) IS NULL THEN details_synced_at
+           ELSE UTC_TIMESTAMP(3)
+         END`,
       [
         battle.id,
+        battle.warId ?? null,
+        battle.regionId ?? null,
         battle.isActive ? 1 : 0,
         battle.attackerCountryId,
         battle.defenderCountryId,
+        battle.winnerCountryId ?? null,
+        battle.attackerScore ?? null,
+        battle.defenderScore ?? null,
+        battle.attackerDamage ?? null,
+        battle.defenderDamage ?? null,
+        jsonParam(battle.currentRound),
+        jsonParam(battle.rounds),
+        jsonParam(battle.roundsHistory),
+        battle.battleType ?? null,
+        battle.totalRounds ?? null,
+        battle.roundsToWin ?? null,
         toMysqlDate(battle.createdAt),
         toMysqlDate(battle.endedAt),
         jsonParam(battle.raw),
+        jsonParam(battle.detailsRaw),
+        jsonParam(battle.detailsRaw),
       ],
     )
     return result.affectedRows > 0
@@ -308,6 +427,28 @@ export async function getSyncFreshness(jobName: string): Promise<DbFreshness> {
     }
   })
   return result ?? { updatedAt: null, lagSeconds: null }
+}
+
+export async function needsBattleDetailsSync(battleId: string): Promise<boolean> {
+  const result = await withWareraDb('needsBattleDetailsSync', async (db) => {
+    const [rows] = await db.execute<DbRow<{ details_json: string | null }>[]> (
+      'SELECT details_json FROM warera_battles WHERE battle_id = ?',
+      [battleId],
+    )
+    return !rows[0]?.details_json
+  })
+  return result ?? true
+}
+
+export async function needsUserProfileEnrichment(userId: string): Promise<boolean> {
+  const result = await withWareraDb('needsUserProfileEnrichment', async (db) => {
+    const [rows] = await db.execute<DbRow<{ full_profile_json: string | null }>[]> (
+      'SELECT full_profile_json FROM warera_users WHERE user_id = ?',
+      [userId],
+    )
+    return !rows[0]?.full_profile_json
+  })
+  return result ?? true
 }
 
 export async function getDbFederation(period: Period): Promise<{
@@ -436,10 +577,11 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
       avatar_url: string | null
       country_id: string | null
       country_name: string | null
+      country_code: string | null
       damage: number
       help: number
     }>[]>(
-      `SELECT m.user_id, u.username, u.avatar_url, u.country_id, c.name AS country_name,
+      `SELECT m.user_id, u.username, u.avatar_url, u.country_id, c.name AS country_name, c.code AS country_code,
         ${damageColumn} AS damage,
         ${period === 'all' ? 'm.total_help' : period === 'month' ? 'm.monthly_help' : 'm.weekly_help'} AS help
        FROM warera_mu_members m
@@ -462,13 +604,14 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
     }))
     players.forEach((p, i) => (p.rank = i + 1))
 
-    const countryAgg = new Map<string, { name: string; damage: number }>()
-    for (const p of players) {
-      if (!p.countryId || p.damage <= 0) continue
-      const current = countryAgg.get(p.countryId)
-      countryAgg.set(p.countryId, {
-        name: p.countryName ?? p.countryId,
-        damage: (current?.damage ?? 0) + p.damage,
+    const countryAgg = new Map<string, { name: string; code: string | null; damage: number }>()
+    for (const row of playerRows) {
+      if (!row.country_id || Number(row.damage) <= 0) continue
+      const current = countryAgg.get(row.country_id)
+      countryAgg.set(row.country_id, {
+        name: row.country_name ?? row.country_id,
+        code: current?.code ?? row.country_code ?? null,
+        damage: (current?.damage ?? 0) + Number(row.damage),
       })
     }
 
@@ -485,6 +628,7 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
         damage: row.damage,
         share: 0,
         rank: null,
+        meta: { code: row.code },
       }))),
       byPlayer: players,
       updatedAt: fromMysqlDate(mu.updated_at),

@@ -4,7 +4,7 @@ import {
   HeartHandshake, Loader2, Info,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, formatPeriodRange, PERIOD_LABEL } from '~/utils/format'
-import type { JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
+import type { DamageRow, JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
 
 const { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh } = useDashboard()
 
@@ -27,11 +27,19 @@ const fedSupOwnTotal = computed(() =>
 )
 
 const selectedJusticePlayer = ref<PlayerRow | null>(null)
+const selectedJusticeCountry = ref<DamageRow | null>(null)
 const justicePlayerDaily = ref<JusticePlayerDailyResponse | null>(null)
 const justicePlayerDailyLoading = ref(false)
 const justicePlayerDailyError = ref<string | null>(null)
 let justicePlayerDailyRequest = 0
 let justicePlayerDailyTimer: ReturnType<typeof setInterval> | null = null
+
+const selectedJusticeCountryPlayers = computed(() => {
+  if (!selectedJusticeCountry.value) return []
+  return [...(jus.value?.byPlayer ?? [])]
+    .filter((player) => player.countryId === selectedJusticeCountry.value?.id && player.damage > 0)
+    .sort((a, b) => b.damage - a.damage)
+})
 
 function stopJusticePlayerDailyPolling() {
   if (justicePlayerDailyTimer) {
@@ -111,10 +119,19 @@ async function selectJusticePlayer(player: PlayerRow) {
   }
 }
 
+function selectJusticeCountry(country: DamageRow) {
+  if (selectedJusticeCountry.value?.id === country.id) {
+    selectedJusticeCountry.value = null
+    return
+  }
+  selectedJusticeCountry.value = country
+}
+
 watch(period, () => {
   justicePlayerDailyRequest++
   stopJusticePlayerDailyPolling()
   selectedJusticePlayer.value = null
+  selectedJusticeCountry.value = null
   justicePlayerDaily.value = null
   justicePlayerDailyError.value = null
   justicePlayerDailyLoading.value = false
@@ -207,7 +224,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" />
+              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" :collapsed-limit="15" />
             </div>
           </div>
         </div>
@@ -359,7 +376,21 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[period] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="jus?.byCountry ?? []" :loading="jusLoading" accent="just" show-flag />
+              <DamageTable
+                :rows="jus?.byCountry ?? []"
+                :loading="jusLoading"
+                accent="just"
+                show-flag
+                :selected-id="selectedJusticeCountry?.id ?? null"
+                @select="selectJusticeCountry"
+              >
+                <template #expanded="{ row }">
+                  <CountryPlayerBreakdown
+                    :country="row"
+                    :players="selectedJusticeCountry?.id === row.id ? selectedJusticeCountryPlayers : []"
+                  />
+                </template>
+              </DamageTable>
             </div>
           </div>
 
@@ -381,14 +412,17 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 :loading="jusLoading"
                 :selected-id="selectedJusticePlayer?.id ?? null"
                 @select="selectJusticePlayer"
-              />
+              >
+                <template #expanded>
+                  <PlayerDailyCard
+                    :player="selectedJusticePlayer"
+                    :data="justicePlayerDaily"
+                    :loading="justicePlayerDailyLoading"
+                    :error="justicePlayerDailyError"
+                  />
+                </template>
+              </PlayerTable>
             </div>
-            <PlayerDailyCard
-              :player="selectedJusticePlayer"
-              :data="justicePlayerDaily"
-              :loading="justicePlayerDailyLoading"
-              :error="justicePlayerDailyError"
-            />
           </div>
         </div>
       </section>

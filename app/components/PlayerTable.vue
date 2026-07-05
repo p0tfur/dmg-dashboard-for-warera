@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, useSlots } from 'vue'
 import { formatDamage, formatFull } from '~/utils/format'
 import type { PlayerRow } from '~~/shared/types/warera'
 
@@ -17,15 +17,16 @@ const emit = defineEmits<{
   select: [row: PlayerRow]
 }>()
 
+const slots = useSlots()
 const sortDesc = ref(true)
 const sorted = computed(() => {
   const arr = [...props.rows]
   arr.sort((a, b) => (sortDesc.value ? b.damage - a.damage : a.damage - b.damage))
   return arr.slice(0, props.limit)
 })
-const maxDamage = computed(() =>
-  sorted.value.reduce((m, r) => Math.max(m, r.damage), 0) || 1,
-)
+
+const colSpan = computed(() => (props.showHelp ? 6 : 5))
+const hasExpandedSlot = computed(() => Boolean(slots.expanded))
 
 function selectRow(row: PlayerRow) {
   emit('select', row)
@@ -63,64 +64,70 @@ function selectRow(row: PlayerRow) {
         </template>
 
         <template v-else>
-          <tr
-            v-for="r in sorted"
-            :key="r.id"
-            class="border-t border-white/[0.04] cursor-pointer transition-colors hover:bg-white/[0.025]"
-            :class="r.id === selectedId ? 'bg-just/10 ring-1 ring-inset ring-just/25' : ''"
-            tabindex="0"
-            role="button"
-            @click="selectRow(r)"
-            @keydown.enter.prevent="selectRow(r)"
-            @keydown.space.prevent="selectRow(r)"
-          >
-            <td class="py-2.5 pr-2 text-right data-mono text-xs text-just/70">
-              {{ r.rank ?? '—' }}
-            </td>
-            <td class="py-2 pr-2 align-middle">
-              <img
-                v-if="r.avatarUrl"
-                :src="r.avatarUrl"
-                :alt="r.name"
-                class="h-7 w-7 rounded-full object-cover border border-white/10"
-                loading="lazy"
-                @error="($event.target as HTMLImageElement).style.display = 'none'"
-              />
-              <div
-                v-else
-                class="h-7 w-7 rounded-full grid place-items-center bg-just/10 text-just text-[10px] font-bold border border-just/20"
-              >
-                {{ (r.name || '?').slice(0, 1).toUpperCase() }}
-              </div>
-            </td>
-            <td class="py-2.5 pr-2 min-w-0">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="truncate text-zinc-100 font-medium">{{ r.name }}</span>
-                <span
-                  v-if="r.id === selectedId"
-                  class="text-[10px] uppercase tracking-[0.16em] text-just-glow"
-                >
-                  Selected
-                </span>
-              </div>
-            </td>
-            <td class="py-2 px-2 whitespace-nowrap">
-              <span class="text-zinc-400 text-xs">{{ r.countryName ?? '—' }}</span>
-            </td>
-            <td
-              class="py-2.5 px-2 text-right data-mono font-semibold text-zinc-100"
-              :title="formatFull(r.damage)"
+          <template v-for="r in sorted" :key="r.id">
+            <tr
+              class="border-t border-white/[0.04] cursor-pointer transition-colors hover:bg-white/[0.025]"
+              :class="r.id === selectedId ? 'bg-just/10 ring-1 ring-inset ring-just/25' : ''"
+              tabindex="0"
+              role="button"
+              @click="selectRow(r)"
+              @keydown.enter.prevent="selectRow(r)"
+              @keydown.space.prevent="selectRow(r)"
             >
-              {{ formatDamage(r.damage) }}
-            </td>
-            <td v-if="showHelp" class="py-2.5 pl-2 text-right data-mono text-xs text-zinc-500">
-              {{ r.help ?? '—' }}
-            </td>
-          </tr>
+              <td class="py-2.5 pr-2 text-right data-mono text-xs text-just/70">
+                {{ r.rank ?? '—' }}
+              </td>
+              <td class="py-2 pr-2 align-middle">
+                <img
+                  v-if="r.avatarUrl"
+                  :src="r.avatarUrl"
+                  :alt="r.name"
+                  class="h-7 w-7 rounded-full object-cover border border-white/10"
+                  loading="lazy"
+                  @error="($event.target as HTMLImageElement).style.display = 'none'"
+                />
+                <div
+                  v-else
+                  class="h-7 w-7 rounded-full grid place-items-center bg-just/10 text-just text-[10px] font-bold border border-just/20"
+                >
+                  {{ (r.name || '?').slice(0, 1).toUpperCase() }}
+                </div>
+              </td>
+              <td class="py-2.5 pr-2 min-w-0">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="truncate text-zinc-100 font-medium">{{ r.name }}</span>
+                  <span
+                    v-if="r.id === selectedId"
+                    class="text-[10px] uppercase tracking-[0.16em] text-just-glow"
+                  >
+                    Expanded
+                  </span>
+                </div>
+              </td>
+              <td class="py-2 px-2 whitespace-nowrap">
+                <span class="text-zinc-400 text-xs">{{ r.countryName ?? '—' }}</span>
+              </td>
+              <td
+                class="py-2.5 px-2 text-right data-mono font-semibold text-zinc-100"
+                :title="formatFull(r.damage)"
+              >
+                {{ formatDamage(r.damage) }}
+              </td>
+              <td v-if="showHelp" class="py-2.5 pl-2 text-right data-mono text-xs text-zinc-500">
+                {{ r.help ?? '—' }}
+              </td>
+            </tr>
+
+            <tr v-if="hasExpandedSlot && r.id === selectedId" class="border-t border-white/[0.04] bg-white/[0.02]">
+              <td :colspan="colSpan" class="p-0">
+                <slot name="expanded" :row="r" />
+              </td>
+            </tr>
+          </template>
         </template>
 
         <tr v-if="!loading && sorted.length === 0">
-          <td :colspan="showHelp ? 6 : 5" class="py-8 text-center text-zinc-600 text-sm">
+          <td :colspan="colSpan" class="py-8 text-center text-zinc-600 text-sm">
             No members in this period.
           </td>
         </tr>

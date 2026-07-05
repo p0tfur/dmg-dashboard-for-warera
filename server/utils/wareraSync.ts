@@ -3,6 +3,8 @@ import {
   getSyncCheckpoint,
   markSyncFailure,
   markSyncSuccess,
+  needsBattleDetailsSync,
+  needsUserProfileEnrichment,
   upsertAlliance,
   upsertBattle,
   upsertBattleRankings,
@@ -123,11 +125,29 @@ function mapMu(raw: any, idFallback?: string): MuSnapshot | null {
 }
 
 function mapUser(userId: string, raw: any): UserSnapshot {
+  const rankings = raw?.rankings ?? {}
   return {
     id: userId,
     name: raw?.username ?? raw?.name ?? userId,
-    avatarUrl: raw?.avatarUrl ?? null,
+    avatarUrl: raw?.avatar_url ?? raw?.avatarUrl ?? null,
     country: raw?.country ?? raw?.citizenship ?? raw?.countryId ?? null,
+    muId: raw?.mu ?? null,
+    isActive: raw?.is_active ?? raw?.isActive ?? null,
+    militaryRank: raw?.military_rank ?? raw?.militaryRank ?? null,
+    createdAt: raw?.created_at ?? raw?.createdAt ?? null,
+    updatedAt: raw?.updated_at ?? raw?.updatedAt ?? null,
+    level: raw?.leveling?.level ?? null,
+    totalXp: raw?.leveling?.total_xp ?? raw?.leveling?.totalXp ?? null,
+    totalDamages: raw?.stats?.damages_count ?? raw?.stats?.damagesCount ?? null,
+    weeklyDamage: rankings?.weekly_user_damages?.value ?? rankings?.weeklyUserDamages?.value ?? null,
+    totalDamageRank: rankings?.user_damages?.rank ?? rankings?.userDamages?.rank ?? null,
+    weeklyDamageRank: rankings?.weekly_user_damages?.rank ?? rankings?.weeklyUserDamages?.rank ?? null,
+    dates: raw?.dates ?? null,
+    stats: raw?.stats ?? null,
+    rankings: raw?.rankings ?? null,
+    skills: raw?.skills ?? null,
+    infos: raw?.infos ?? null,
+    fullRaw: raw?.skills || raw?.missions || raw?.equipment || raw?.preferences ? raw : null,
     raw,
   }
 }
@@ -136,12 +156,47 @@ function mapBattle(raw: BattleListItem): BattleSnapshot | null {
   if (!raw?._id) return null
   return {
     id: raw._id,
-    isActive: Boolean(raw.isActive),
+    warId: (raw as any).war ?? (raw as any).warId ?? (raw as any).war_id ?? null,
+    regionId: (raw as any).region ?? (raw as any).regionId ?? (raw as any).region_id ?? null,
+    isActive: Boolean((raw as any).is_active ?? raw.isActive),
     attackerCountryId: raw.attacker?.country ?? null,
     defenderCountryId: raw.defender?.country ?? null,
-    createdAt: raw.createdAt ?? null,
-    endedAt: raw.endedAt ?? null,
+    winnerCountryId: (raw as any).winnerCountry ?? (raw as any).winner_country ?? (raw as any).winner_country_id ?? null,
+    attackerScore: (raw as any).attacker_score ?? (raw as any).attackerScore ?? null,
+    defenderScore: (raw as any).defender_score ?? (raw as any).defenderScore ?? null,
+    attackerDamage: raw.attacker?.damages ?? null,
+    defenderDamage: raw.defender?.damages ?? null,
+    currentRound: (raw as any).current_round ?? (raw as any).currentRound ?? null,
+    rounds: (raw as any).rounds ?? null,
+    roundsHistory: (raw as any).rounds_history ?? (raw as any).roundsHistory ?? null,
+    battleType: (raw as any).type ?? null,
+    totalRounds: (raw as any).total_rounds ?? (raw as any).totalRounds ?? null,
+    roundsToWin: (raw as any).rounds_to_win ?? (raw as any).roundsToWin ?? null,
+    createdAt: (raw as any).created_at ?? raw.createdAt ?? null,
+    endedAt: (raw as any).ended_at ?? raw.endedAt ?? (raw as any).end_time ?? null,
     raw,
+  }
+}
+
+function mapBattleDetails(raw: any): BattleSnapshot | null {
+  const battle = mapBattle(raw as BattleListItem)
+  if (!battle) return null
+  return {
+    ...battle,
+    warId: raw?.war ?? raw?.warId ?? raw?.war_id ?? battle.warId ?? null,
+    regionId: raw?.region ?? raw?.regionId ?? raw?.region_id ?? battle.regionId ?? null,
+    winnerCountryId: raw?.winnerCountry ?? raw?.winner_country ?? raw?.winner_country_id ?? battle.winnerCountryId ?? null,
+    attackerScore: raw?.attacker_score ?? raw?.attackerScore ?? battle.attackerScore ?? null,
+    defenderScore: raw?.defender_score ?? raw?.defenderScore ?? battle.defenderScore ?? null,
+    attackerDamage: raw?.attacker?.damages ?? battle.attackerDamage ?? null,
+    defenderDamage: raw?.defender?.damages ?? battle.defenderDamage ?? null,
+    currentRound: raw?.current_round ?? raw?.currentRound ?? battle.currentRound ?? null,
+    rounds: raw?.rounds ?? battle.rounds ?? null,
+    roundsHistory: raw?.rounds_history ?? raw?.roundsHistory ?? battle.roundsHistory ?? null,
+    battleType: raw?.type ?? battle.battleType ?? null,
+    totalRounds: raw?.total_rounds ?? raw?.totalRounds ?? battle.totalRounds ?? null,
+    roundsToWin: raw?.rounds_to_win ?? raw?.roundsToWin ?? battle.roundsToWin ?? null,
+    detailsRaw: raw,
   }
 }
 
@@ -210,7 +265,12 @@ async function syncJusticeMembers(muId: string): Promise<string[]> {
   for (const member of members) {
     await waitForBudget(20)
     try {
-      const rawUser = await trpcGet<any>('user.getUserLite', { userId: member.userId }, 1)
+      const needsFull = await needsUserProfileEnrichment(member.userId)
+      const rawUser = await trpcGet<any>(
+        needsFull ? 'user.getUserById' : 'user.getUserLite',
+        { userId: member.userId },
+        1,
+      )
       users.push(mapUser(member.userId, rawUser))
     } catch {
       users.push({ id: member.userId, name: member.userId, avatarUrl: null, country: null })
@@ -222,9 +282,15 @@ async function syncJusticeMembers(muId: string): Promise<string[]> {
 
 async function syncBattleRankings(battleId: string): Promise<void> {
   const requests: Array<Promise<BattleRankingSnapshot[]>> = [
-    fetchBattleRankings(battleId, 'country'),
-    fetchBattleRankings(battleId, 'user'),
-    fetchBattleRankings(battleId, 'mu'),
+    fetchBattleRankings(battleId, 'country', 'merged'),
+    fetchBattleRankings(battleId, 'country', 'attacker'),
+    fetchBattleRankings(battleId, 'country', 'defender'),
+    fetchBattleRankings(battleId, 'user', 'merged'),
+    fetchBattleRankings(battleId, 'user', 'attacker'),
+    fetchBattleRankings(battleId, 'user', 'defender'),
+    fetchBattleRankings(battleId, 'mu', 'merged'),
+    fetchBattleRankings(battleId, 'mu', 'attacker'),
+    fetchBattleRankings(battleId, 'mu', 'defender'),
   ]
   const rankings = (await Promise.all(requests)).flat()
   await upsertBattleRankings(rankings)
@@ -233,13 +299,14 @@ async function syncBattleRankings(battleId: string): Promise<void> {
 async function fetchBattleRankings(
   battleId: string,
   entityType: 'user' | 'country' | 'mu',
+  side: 'attacker' | 'defender' | 'merged',
 ): Promise<BattleRankingSnapshot[]> {
   await waitForBudget(15)
   const raw = await trpcGet<any>('battleRanking.getRanking', {
     battleId,
     dataType: 'damage',
     type: entityType,
-    side: 'merged',
+    side,
     limit: 100,
   }, 1)
   return asArray<any>(raw).map((item) => {
@@ -249,7 +316,7 @@ async function fetchBattleRankings(
       battleId,
       entityType,
       entityId,
-      side: 'merged' as const,
+      side,
       damage: Number(item?.value ?? 0),
       rank: item?.rank ?? null,
       raw: item,
@@ -284,6 +351,9 @@ async function scanFederationBattles(memberCountryIds: string[]): Promise<void> 
           newestSeen ||= battle.id
           if (checkpoint && battle.id === checkpoint) return
           await upsertBattle(battle)
+          if (await needsBattleDetailsSync(battle.id)) {
+            await syncBattleDetails(battle.id)
+          }
           await syncBattleRankings(battle.id)
         }
 
@@ -295,6 +365,14 @@ async function scanFederationBattles(memberCountryIds: string[]): Promise<void> 
   }
 
   await markSyncSuccess('federation-battles', newestSeen)
+}
+
+async function syncBattleDetails(battleId: string): Promise<void> {
+  await waitForBudget(15)
+  const raw = await trpcGet<any>('battle.getById', { battleId }, 1)
+  const battle = mapBattleDetails(raw)
+  if (!battle) return
+  await upsertBattle(battle)
 }
 
 export function ensureWareraDbSyncStarted(): void {
@@ -368,6 +446,9 @@ async function syncJusticeUserBattles(userIds: string[]): Promise<void> {
         const battle = mapBattle(item)
         if (!battle) continue
         await upsertBattle(battle)
+        if (await needsBattleDetailsSync(battle.id)) {
+          await syncBattleDetails(battle.id)
+        }
         await syncBattleRankings(battle.id)
       }
       if (hitCutoff) break

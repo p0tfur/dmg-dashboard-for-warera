@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="10" fill="#0E1116"/>
+  <path
+    d="M14 16L48 16L48 22L22 22L22 48L16 48L16 18L14 16Z"
+    fill="#FFC04D"
+    fill-opacity=".9"
+  />
+  <path
+    d="M50 48L16 48L16 42L42 42L42 16L48 16L48 46L50 48Z"
+    fill="#67E8F9"
+    fill-opacity=".9"
+  />
+  <path
+    d="M22 14H42L50 22V42L42 50H22L14 42V22L22 14Z"
+    stroke="rgba(255,255,255,.16)"
+    stroke-width="2"
+  />
+  <path
+    d="M32 20L37.5 31L32 44L26.5 31L32 20Z"
+    fill="#F5A524"
+  />
+  <path
+    d="M32 24L35.5 31L32 40L28.5 31L32 24Z"
+    fill="#22D3EE"
+  />
+  <circle cx="32" cy="31" r="3.5" fill="#0A0D11" stroke="#E5EDF7" stroke-opacity=".7" stroke-width="1.5"/>
+</svg>
