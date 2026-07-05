@@ -719,18 +719,27 @@ export async function getDbFederationSupport(period: Period): Promise<{
   updatedAt: string | null
 } | null> {
   return withWareraDb('getDbFederationSupport', async (db) => {
-    const [alliances] = await db.execute<DbRow<{ member_country_ids: string | string[] | null }>[]> (
-      'SELECT member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
+    const [alliances] = await db.execute<DbRow<{
+      alliance_id: string
+      member_country_ids: string | string[] | null
+    }>[]> (
+      'SELECT alliance_id, member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
     )
-    const memberIds = Array.isArray(alliances[0]?.member_country_ids)
-      ? alliances[0].member_country_ids
-      : JSON.parse(String(alliances[0]?.member_country_ids || '[]')) as string[]
+    const alliance = alliances[0]
+    if (!alliance) return null
+    const memberIds = Array.isArray(alliance.member_country_ids)
+      ? alliance.member_country_ids
+      : JSON.parse(String(alliance.member_country_ids || '[]')) as string[]
     if (!memberIds.length) return null
+    const allianceId = alliance.alliance_id
 
     const since = period === 'week'
       ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
       : null
 
+    // LEFT JOIN so every member country appears (even with 0 support damage).
+    // The previous approach used an inner join + HAVING, which dropped countries
+    // that never participated in an ally battle.
     const [rows] = await db.query<DbRow<{
       country_id: string
       name: string | null
@@ -738,34 +747,41 @@ export async function getDbFederationSupport(period: Period): Promise<{
       support_damage: number
       own_damage: number
     }>[]>(
-      `SELECT r.entity_id AS country_id, c.name, c.code,
-        SUM(CASE
-          WHEN r.entity_id <> CASE
-            WHEN b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?) THEN b.defender_country_id
-            WHEN b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?) THEN b.attacker_country_id
-            ELSE NULL
-          END THEN r.damage ELSE 0 END) AS support_damage,
-        SUM(CASE
-          WHEN r.entity_id = b.defender_country_id OR r.entity_id = b.attacker_country_id THEN r.damage ELSE 0 END) AS own_damage
-       FROM warera_battles b
-       JOIN warera_battle_rankings r ON r.battle_id = b.battle_id AND r.entity_type = 'country' AND r.side = 'merged'
-       LEFT JOIN warera_countries c ON c.country_id = r.entity_id
-       WHERE ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
-          OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
-         AND r.entity_id IN (?)
-         ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
-       GROUP BY r.entity_id, c.name, c.code
-       HAVING support_damage > 0 OR own_damage > 0
+      `SELECT mc.country_id, c.name, c.code,
+         COALESCE(agg.support_damage, 0) AS support_damage,
+         COALESCE(agg.own_damage, 0) AS own_damage
+       FROM (
+         SELECT DISTINCT country_id FROM warera_alliance_membership_history
+         WHERE alliance_id = ? AND left_at IS NULL
+       ) mc
+       LEFT JOIN warera_countries c ON c.country_id = mc.country_id
+       LEFT JOIN (
+         SELECT r.entity_id AS country_id,
+           SUM(CASE
+             WHEN r.entity_id <> CASE
+               WHEN b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?) THEN b.defender_country_id
+               WHEN b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?) THEN b.attacker_country_id
+               ELSE NULL
+             END THEN r.damage ELSE 0 END) AS support_damage,
+           SUM(CASE
+             WHEN r.entity_id = b.defender_country_id OR r.entity_id = b.attacker_country_id THEN r.damage ELSE 0 END) AS own_damage
+         FROM warera_battles b
+         JOIN warera_battle_rankings r ON r.battle_id = b.battle_id AND r.entity_type = 'country' AND r.side = 'merged'
+         JOIN warera_alliance_membership_history mh
+           ON mh.alliance_id = ? AND mh.country_id = r.entity_id
+         WHERE ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
+            OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
+           AND r.entity_id IN (?)
+           AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+           ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
+         GROUP BY r.entity_id
+       ) agg ON agg.country_id = mc.country_id
        ORDER BY support_damage DESC`,
       [
-        memberIds,
-        memberIds,
-        memberIds,
-        memberIds,
-        memberIds,
-        memberIds,
-        memberIds,
-        memberIds,
+        allianceId,
+        memberIds, memberIds, memberIds, memberIds,
+        allianceId,
+        memberIds, memberIds, memberIds, memberIds,
         memberIds,
         ...(since ? [toMysqlDate(since)] : []),
       ],
@@ -818,13 +834,19 @@ export async function getDbFederationSupportBreakdown(
   updatedAt: string | null
 } | null> {
   return withWareraDb('getDbFederationSupportBreakdown', async (db) => {
-    const [alliances] = await db.execute<DbRow<{ member_country_ids: string | string[] | null }>[]>(
-      'SELECT member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
+    const [alliances] = await db.execute<DbRow<{
+      alliance_id: string
+      member_country_ids: string | string[] | null
+    }>[]>(
+      'SELECT alliance_id, member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
     )
-    const memberIds = Array.isArray(alliances[0]?.member_country_ids)
-      ? alliances[0].member_country_ids
-      : (JSON.parse(String(alliances[0]?.member_country_ids || '[]')) as string[])
+    const alliance = alliances[0]
+    if (!alliance) return null
+    const memberIds = Array.isArray(alliance.member_country_ids)
+      ? alliance.member_country_ids
+      : (JSON.parse(String(alliance.member_country_ids || '[]')) as string[])
     if (!memberIds.length) return null
+    const allianceId = alliance.alliance_id
 
     const since = period === 'week'
       ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -851,7 +873,10 @@ export async function getDbFederationSupportBreakdown(
          FROM warera_battles b
          JOIN warera_battle_rankings r
            ON r.battle_id = b.battle_id AND r.entity_type = 'country' AND r.side = 'merged'
+         JOIN warera_alliance_membership_history mh
+           ON mh.alliance_id = ? AND mh.country_id = r.entity_id
          WHERE r.entity_id = ?
+           AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
            AND ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
               OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
            ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
@@ -862,6 +887,7 @@ export async function getDbFederationSupportBreakdown(
        ORDER BY support_damage DESC`,
       [
         memberIds, memberIds, memberIds, memberIds,
+        allianceId,
         countryId,
         memberIds, memberIds, memberIds, memberIds,
         ...(since ? [toMysqlDate(since)] : []),
