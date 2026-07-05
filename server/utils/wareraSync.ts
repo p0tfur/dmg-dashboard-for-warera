@@ -1,6 +1,5 @@
 import { trpcGet, waitForBudget } from './wareraClient'
 import {
-  getSyncCheckpoint,
   markSyncFailure,
   markSyncSuccess,
   needsBattleDetailsSync,
@@ -37,7 +36,7 @@ const FED_EXTRA_MU_IDS = ((process.env.WARERA_FED_EXTRA_MU_IDS as string | undef
 
 const SYNC_INTERVAL_MS = 2 * 60 * 1000
 const REFERENCE_INTERVAL_MS = 10 * 60 * 1000
-const FED_BATTLE_PAGE_LIMIT = 8
+const FED_BATTLE_PAGE_LIMIT = 15
 const FED_COUNTRY_CONCURRENCY = 2
 
 let started = false
@@ -412,8 +411,9 @@ async function fetchBattleRankings(
 }
 
 async function scanFederationBattles(memberCountryIds: string[], userContext: UserContext): Promise<void> {
-  const checkpoint = await getSyncCheckpoint('federation-battles')
-  let newestSeen: string | null = null
+  // No battle-ID checkpoint — we rely on needsBattleDetailsSync to skip
+  // already-synced battles. The 15-page limit per country controls the
+  // API budget per cycle; over time this naturally digs deeper into history.
 
   for (let i = 0; i < memberCountryIds.length; i += FED_COUNTRY_CONCURRENCY) {
     const batch = memberCountryIds.slice(i, i + FED_COUNTRY_CONCURRENCY)
@@ -435,10 +435,8 @@ async function scanFederationBattles(memberCountryIds: string[], userContext: Us
         for (const item of items) {
           const battle = mapBattle(item)
           if (!battle) continue
-          newestSeen ||= battle.id
-          if (checkpoint && battle.id === checkpoint) return
-          await upsertBattle(battle)
           if (await needsBattleDetailsSync(battle.id)) {
+            await upsertBattle(battle)
             await syncBattleDetails(battle.id)
           }
           await syncBattleRankings(battle.id, battle.endedAt, userContext)
@@ -451,7 +449,7 @@ async function scanFederationBattles(memberCountryIds: string[], userContext: Us
     }))
   }
 
-  await markSyncSuccess('federation-battles', newestSeen)
+  await markSyncSuccess('federation-battles')
 }
 
 async function syncBattleDetails(battleId: string): Promise<void> {

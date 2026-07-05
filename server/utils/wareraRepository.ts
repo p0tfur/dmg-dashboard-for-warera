@@ -594,7 +594,10 @@ export async function getDbFederation(period: Period): Promise<{
     return {
       allianceName: alliance.name,
       avatarUrl: alliance.avatar_url,
-      totalDamage: Number(period === 'all' ? alliance.total_damage : alliance.weekly_damage),
+      // Derive from our own rankings (already filtered by membership join date)
+      // instead of the game's pre-aggregated alliance.total_damage which includes
+      // pre-membership damage for countries that joined later.
+      totalDamage: countryRows.reduce((sum, row) => sum + Number(row.damage), 0),
       globalRank: period === 'all' ? alliance.global_total_rank : alliance.global_weekly_rank,
       memberCountryCount: memberIds.length,
       byCountry: finalizeDamageRows(countryRows.map((row) => ({
