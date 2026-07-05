@@ -4,6 +4,15 @@ let pool: Pool | null = null
 let warnedMissing = false
 let mysqlPromise: Promise<typeof import('mysql2/promise')> | null = null
 
+interface MysqlLikeError {
+  message?: string
+  code?: string
+  errno?: number
+  sqlState?: string
+  sqlMessage?: string
+  cause?: unknown
+}
+
 export function getDatabaseUrl(): string {
   const config = useRuntimeConfig()
   return (config.databaseUrl as string | undefined) || ''
@@ -42,6 +51,7 @@ export async function getWareraDbPool(): Promise<Pool | null> {
 }
 
 export async function withWareraDb<T>(
+  context: string,
   fn: (db: Pool) => Promise<T>,
 ): Promise<T | null> {
   const db = await getWareraDbPool()
@@ -49,12 +59,13 @@ export async function withWareraDb<T>(
   try {
     return await fn(db)
   } catch (err) {
-    console.warn(`[warera-db] ${err instanceof Error ? err.message : String(err)}`)
+    logWareraDbError(context, err)
     return null
   }
 }
 
 export async function withWareraDbConnection<T>(
+  context: string,
   fn: (db: PoolConnection) => Promise<T>,
 ): Promise<T | null> {
   const pool = await getWareraDbPool()
@@ -64,11 +75,54 @@ export async function withWareraDbConnection<T>(
     conn = await pool.getConnection()
     return await fn(conn)
   } catch (err) {
-    console.warn(`[warera-db] ${err instanceof Error ? err.message : String(err)}`)
+    logWareraDbError(context, err)
     return null
   } finally {
     conn?.release()
   }
+}
+
+function logWareraDbError(context: string, err: unknown) {
+  const details = formatWareraDbError(err)
+  console.warn(`[warera-db] ${context}: ${details}`)
+}
+
+function formatWareraDbError(err: unknown): string {
+  if (err instanceof Error) {
+    const mysqlErr = err as Error & MysqlLikeError
+    const parts = [mysqlErr.message || 'Unknown database error']
+    if (mysqlErr.code) parts.push(`code=${mysqlErr.code}`)
+    if (typeof mysqlErr.errno === 'number') parts.push(`errno=${mysqlErr.errno}`)
+    if (mysqlErr.sqlState) parts.push(`sqlState=${mysqlErr.sqlState}`)
+    if (mysqlErr.sqlMessage && mysqlErr.sqlMessage !== mysqlErr.message) {
+      parts.push(`sqlMessage=${mysqlErr.sqlMessage}`)
+    }
+    if (mysqlErr.cause) {
+      parts.push(`cause=${formatWareraDbError(mysqlErr.cause)}`)
+    }
+    return parts.join(' | ')
+  }
+
+  if (err && typeof err === 'object') {
+    const mysqlErr = err as MysqlLikeError
+    const parts = [
+      mysqlErr.message ||
+      mysqlErr.sqlMessage ||
+      (() => {
+        try {
+          return JSON.stringify(err)
+        } catch {
+          return String(err)
+        }
+      })(),
+    ]
+    if (mysqlErr.code) parts.push(`code=${mysqlErr.code}`)
+    if (typeof mysqlErr.errno === 'number') parts.push(`errno=${mysqlErr.errno}`)
+    if (mysqlErr.sqlState) parts.push(`sqlState=${mysqlErr.sqlState}`)
+    return parts.join(' | ')
+  }
+
+  return String(err)
 }
 
 export function jsonParam(value: unknown): string | null {

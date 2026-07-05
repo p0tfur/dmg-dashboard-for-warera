@@ -91,7 +91,7 @@ export async function upsertTrackedEntity(
   name: string | null,
   metadata?: unknown,
 ): Promise<void> {
-  await withWareraDb(async (db) => {
+  await withWareraDb('upsertTrackedEntity', async (db) => {
     await db.execute(
       `INSERT INTO warera_tracked_entities (entity_key, entity_type, entity_id, name, metadata_json)
        VALUES (?, ?, ?, ?, ?)
@@ -104,7 +104,7 @@ export async function upsertTrackedEntity(
 
 export async function upsertCountries(countries: CountrySnapshot[]): Promise<void> {
   if (!countries.length) return
-  await withWareraDbConnection(async (db) => {
+  await withWareraDbConnection('upsertCountries', async (db) => {
     for (const c of countries) {
       await db.execute(
         `INSERT INTO warera_countries (country_id, name, code, weekly_damage, total_damage, raw_json)
@@ -118,7 +118,7 @@ export async function upsertCountries(countries: CountrySnapshot[]): Promise<voi
 }
 
 export async function upsertAlliance(alliance: AllianceSnapshot): Promise<void> {
-  await withWareraDb(async (db) => {
+  await withWareraDb('upsertAlliance', async (db) => {
     await db.execute(
       `INSERT INTO warera_alliances
        (alliance_id, name, avatar_url, member_country_ids, weekly_damage, total_damage,
@@ -147,7 +147,7 @@ export async function upsertAlliance(alliance: AllianceSnapshot): Promise<void> 
 
 export async function upsertMus(mus: MuSnapshot[]): Promise<void> {
   if (!mus.length) return
-  await withWareraDbConnection(async (db) => {
+  await withWareraDbConnection('upsertMus', async (db) => {
     for (const mu of mus) {
       await db.execute(
         `INSERT INTO warera_mus
@@ -178,7 +178,7 @@ export async function upsertMus(mus: MuSnapshot[]): Promise<void> {
 
 export async function upsertMuMembers(members: MuMemberSnapshot[]): Promise<void> {
   if (!members.length) return
-  await withWareraDbConnection(async (db) => {
+  await withWareraDbConnection('upsertMuMembers', async (db) => {
     for (const m of members) {
       await db.execute(
         `INSERT INTO warera_mu_members
@@ -207,7 +207,7 @@ export async function upsertMuMembers(members: MuMemberSnapshot[]): Promise<void
 
 export async function upsertUsers(users: UserSnapshot[]): Promise<void> {
   if (!users.length) return
-  await withWareraDbConnection(async (db) => {
+  await withWareraDbConnection('upsertUsers', async (db) => {
     for (const u of users) {
       await db.execute(
         `INSERT INTO warera_users (user_id, username, avatar_url, country_id, raw_json)
@@ -221,7 +221,7 @@ export async function upsertUsers(users: UserSnapshot[]): Promise<void> {
 }
 
 export async function upsertBattle(battle: BattleSnapshot): Promise<boolean | null> {
-  return withWareraDb(async (db) => {
+  return withWareraDb('upsertBattle', async (db) => {
     const [result] = await db.execute<ResultSetHeader>(
       `INSERT INTO warera_battles
        (battle_id, is_active, attacker_country_id, defender_country_id, created_at, ended_at, raw_json)
@@ -245,7 +245,7 @@ export async function upsertBattle(battle: BattleSnapshot): Promise<boolean | nu
 
 export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): Promise<void> {
   if (!rankings.length) return
-  await withWareraDbConnection(async (db) => {
+  await withWareraDbConnection('upsertBattleRankings', async (db) => {
     for (const r of rankings) {
       await db.execute(
         `INSERT INTO warera_battle_rankings
@@ -260,7 +260,7 @@ export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): P
 }
 
 export async function markSyncSuccess(jobName: string, checkpoint?: string | null): Promise<void> {
-  await withWareraDb(async (db) => {
+  await withWareraDb('markSyncSuccess', async (db) => {
     await db.execute(
       `INSERT INTO warera_sync_state (job_name, checkpoint_value, last_success_at, last_error)
        VALUES (?, ?, UTC_TIMESTAMP(3), NULL)
@@ -272,7 +272,7 @@ export async function markSyncSuccess(jobName: string, checkpoint?: string | nul
 }
 
 export async function markSyncFailure(jobName: string, error: unknown): Promise<void> {
-  await withWareraDb(async (db) => {
+  await withWareraDb('markSyncFailure', async (db) => {
     await db.execute(
       `INSERT INTO warera_sync_state (job_name, last_failure_at, last_error)
        VALUES (?, UTC_TIMESTAMP(3), ?)
@@ -283,7 +283,7 @@ export async function markSyncFailure(jobName: string, error: unknown): Promise<
 }
 
 export async function getSyncCheckpoint(jobName: string): Promise<string | null> {
-  const result = await withWareraDb(async (db) => {
+  const result = await withWareraDb('getSyncCheckpoint', async (db) => {
     const [rows] = await db.execute<DbRow<{ checkpoint_value: string | null }>[]> (
       'SELECT checkpoint_value FROM warera_sync_state WHERE job_name = ?',
       [jobName],
@@ -294,7 +294,7 @@ export async function getSyncCheckpoint(jobName: string): Promise<string | null>
 }
 
 export async function getSyncFreshness(jobName: string): Promise<DbFreshness> {
-  const result = await withWareraDb(async (db) => {
+  const result = await withWareraDb('getSyncFreshness', async (db) => {
     const [rows] = await db.execute<DbRow<{ last_success_at: string | null; lag_seconds: number | null }>[]> (
       `SELECT last_success_at, TIMESTAMPDIFF(SECOND, last_success_at, UTC_TIMESTAMP(3)) AS lag_seconds
        FROM warera_sync_state WHERE job_name = ?`,
@@ -321,7 +321,7 @@ export async function getDbFederation(period: Period): Promise<{
   updatedAt: string | null
 } | null> {
   if (period === 'month') return null
-  return withWareraDb(async (db) => {
+  return withWareraDb('getDbFederation', async (db) => {
     const [alliances] = await db.execute<DbRow<{
       alliance_id: string
       name: string
@@ -414,7 +414,7 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
   byPlayer: PlayerRow[]
   updatedAt: string | null
 } | null> {
-  return withWareraDb(async (db) => {
+  return withWareraDb('getDbJustice', async (db) => {
     const [muRows] = await db.execute<DbRow<{
       name: string
       avatar_url: string | null
@@ -499,7 +499,7 @@ export async function getDbFederationSupport(period: Period): Promise<{
   allyBattlesCount: number
   updatedAt: string | null
 } | null> {
-  return withWareraDb(async (db) => {
+  return withWareraDb('getDbFederationSupport', async (db) => {
     const [alliances] = await db.execute<DbRow<{ member_country_ids: string | string[] | null }>[]> (
       'SELECT member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
     )
@@ -592,7 +592,7 @@ export async function getDbJusticePlayerDaily(userId: string, days: number): Pro
   battlesScanned: number
   updatedAt: string | null
 } | null> {
-  return withWareraDb(async (db) => {
+  return withWareraDb('getDbJusticePlayerDaily', async (db) => {
     const safeDays = Math.min(Math.max(Math.floor(days || 7), 1), 7)
     const since = new Date(Date.now() - (safeDays - 1) * 24 * 60 * 60 * 1000)
     since.setUTCHours(0, 0, 0, 0)
