@@ -18,6 +18,21 @@ const fedErr = computed(() => federation.error.value as (Error & { statusMessage
 const fedSupErr = computed(() => federationSupport.error.value as (Error & { statusMessage?: string }) | null)
 const jusErr = computed(() => justice.error.value as (Error & { statusMessage?: string }) | null)
 
+// Federation membership legend helpers
+const RECENT_JOINER_DAYS = 30
+function isRecentJoiner(isoDate: string): boolean {
+  if (!isoDate) return false
+  return Date.now() - new Date(isoDate).getTime() < RECENT_JOINER_DAYS * 24 * 60 * 60 * 1000
+}
+function formatJoinDate(isoDate: string): string {
+  if (!isoDate) return ''
+  const d = new Date(isoDate)
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`
+}
+function getCountryName(cid: string): string {
+  return fed.value?.byCountry?.find((c) => c.id === cid)?.name ?? cid
+}
+
 // Total "own" DMG across all Federation countries for comparison KPI.
 const fedSupOwnTotal = computed(() =>
   (fedSup.value?.byCountry ?? []).reduce(
@@ -250,6 +265,22 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
             </div>
             <div class="px-2 py-1">
               <DamageTable :rows="fed?.byCountry ?? []" :loading="fedLoading" accent="fed" show-flag />
+            </div>
+
+            <!-- Membership legend -->
+            <div v-if="fed?.memberJoinedAts && Object.keys(fed.memberJoinedAts).length" class="px-3 pb-3">
+              <div class="flex items-center gap-1.5 mb-1.5">
+                <Info class="h-3 w-3 text-zinc-600" />
+                <span class="text-[10px] font-medium uppercase tracking-widest text-zinc-600">Membership</span>
+              </div>
+              <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                <span v-for="(date, cid) in fed.memberJoinedAts" :key="cid" class="inline-flex items-center gap-1">
+                  <span class="h-1.5 w-1.5 rounded-full"
+                    :class="isRecentJoiner(date) ? 'bg-amber-500/80' : 'bg-zinc-700'" />
+                  {{ getCountryName(cid) }}
+                  <span class="text-zinc-600">joined {{ formatJoinDate(date) }}</span>
+                </span>
+              </div>
             </div>
           </div>
 

@@ -5,6 +5,7 @@ import {
   getDbFederationSupportBreakdown,
   getDbJustice,
   getDbJusticePlayerDaily,
+  getFederationMemberJoinedAts,
   getSyncFreshness,
 } from './wareraRepository'
 import { ensureWareraDbSyncStarted } from './wareraSync'
@@ -427,6 +428,7 @@ export async function getFederationData(period: Period): Promise<FederationRespo
       muCount: dbData.byMu.length,
       byCountry: dbData.byCountry,
       byMu: dbData.byMu,
+      memberJoinedAts: dbData.memberJoinedAts,
       period,
       updatedAt: dbData.updatedAt ?? new Date().toISOString(),
       fromCache: false,
@@ -525,6 +527,7 @@ export async function getFederationData(period: Period): Promise<FederationRespo
 
   return {
     ...(data as FederationResponse),
+    memberJoinedAts: await getFederationMemberJoinedAts(),
     fromCache,
     updatedAt: new Date().toISOString(),
     // Range is computed outside the SWR callback so a briefly-stale DMG cache

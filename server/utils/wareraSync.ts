@@ -5,6 +5,7 @@ import {
   markSyncSuccess,
   needsBattleDetailsSync,
   needsUserProfileEnrichment,
+  recordAllianceMembershipSnapshot,
   recordCitizenshipSnapshot,
   upsertAlliance,
   upsertBattle,
@@ -245,6 +246,10 @@ async function syncReferences(allianceId: string, justiceMuId: string): Promise<
     upsertTrackedEntity('justice', 'mu', justiceMuId, justice?.name ?? JUSTICE_NAME, { source: 'env-or-search' }),
     ...FED_EXTRA_MU_IDS.map((id) => upsertTrackedEntity(`extra_mu:${id}`, 'extra_mu', id, null)),
   ])
+
+  // Track membership changes (new joiners, leavers) so the dashboard can
+  // filter pre-membership damage from aggregations.
+  await recordAllianceMembershipSnapshot(allianceId, alliance.memberCountryIds)
 
   await syncAllMus()
   return alliance

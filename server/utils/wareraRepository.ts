@@ -490,6 +490,7 @@ export async function getDbFederation(period: Period): Promise<{
   memberCountryCount: number
   byCountry: DamageRow[]
   byMu: DamageRow[]
+  memberJoinedAts: Record<string, string>
   updatedAt: string | null
 } | null> {
   if (period === 'month') return null
@@ -513,18 +514,37 @@ export async function getDbFederation(period: Period): Promise<{
       : JSON.parse(String(alliance.member_country_ids || '[]')) as string[]
     if (!memberIds.length) return null
 
-    const column = periodColumn(period)
+    // Damage computed from our own battle rankings, filtered by membership
+    // join date. This excludes pre-membership damage that the game's
+    // country.total_damage would include.
+    //
+    // NOTE: uses EARLIEST join_date as a simple cutoff. If a country left
+    // and later rejoined, damage during the gap is still included. This is
+    // a known limitation that requires multi-interval membership tracking.
+    const dateFilter = period === 'week'
+      ? 'AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 7 DAY'
+      : ''
+    const allianceId = alliance.alliance_id
+
     const [countryRows] = await db.query<DbRow<{
       country_id: string
       name: string
       code: string | null
       damage: number
     }>[]>(
-      `SELECT country_id, name, code, ${column} AS damage
-       FROM warera_countries
-       WHERE country_id IN (?) AND ${column} > 0
-       ORDER BY ${column} DESC`,
-      [memberIds],
+      `SELECT c.country_id, c.name, c.code, SUM(r.damage) AS damage
+       FROM warera_battle_rankings r
+       JOIN warera_battles b ON b.battle_id = r.battle_id
+       JOIN warera_countries c ON c.country_id = r.entity_id
+       JOIN warera_alliance_membership_history mh
+         ON mh.alliance_id = ? AND mh.country_id = r.entity_id
+       WHERE r.entity_type = 'country' AND r.side = 'merged'
+         AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+         ${dateFilter}
+       GROUP BY c.country_id, c.name, c.code
+       HAVING SUM(r.damage) > 0
+       ORDER BY damage DESC`,
+      [allianceId],
     )
 
     const [muRows] = await db.query<DbRow<{
@@ -535,18 +555,41 @@ export async function getDbFederation(period: Period): Promise<{
       code: string | null
       damage: number
     }>[]>(
-      `SELECT m.mu_id, m.name, m.country_id, c.name AS country_name, c.code, m.${column} AS damage
-       FROM warera_mus m
+      `SELECT m.mu_id, m.name, m.country_id, c.name AS country_name, c.code,
+         SUM(r.damage) AS damage
+       FROM warera_battle_rankings r
+       JOIN warera_battles b ON b.battle_id = r.battle_id
+       JOIN warera_mus m ON m.mu_id = r.entity_id
        LEFT JOIN warera_countries c ON c.country_id = m.country_id
-       WHERE m.${column} > 0 AND (
-         m.country_id IN (?) OR EXISTS (
-           SELECT 1 FROM warera_tracked_entities te
-           WHERE te.entity_type = 'extra_mu' AND te.entity_id = m.mu_id
+       LEFT JOIN warera_alliance_membership_history mh
+         ON mh.alliance_id = ? AND mh.country_id = m.country_id
+       WHERE r.entity_type = 'mu' AND r.side = 'merged'
+         AND (
+           (mh.country_id IS NOT NULL
+             AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at)
+           OR EXISTS (
+             SELECT 1 FROM warera_tracked_entities te
+             WHERE te.entity_type = 'extra_mu' AND te.entity_id = m.mu_id
+           )
          )
-       )
-       ORDER BY m.${column} DESC`,
-      [memberIds],
+         ${dateFilter}
+       GROUP BY m.mu_id, m.name, m.country_id, c.name, c.code
+       HAVING SUM(r.damage) > 0
+       ORDER BY damage DESC`,
+      [allianceId],
     )
+
+    // Membership join dates for the UI legend (new joiners badge).
+    const [joinedRows] = await db.query<DbRow<{ country_id: string; joined_at: string }>[]>(
+      `SELECT country_id, joined_at
+       FROM warera_alliance_membership_history
+       WHERE alliance_id = ? AND left_at IS NULL`,
+      [allianceId],
+    )
+    const memberJoinedAts: Record<string, string> = {}
+    for (const row of joinedRows) {
+      memberJoinedAts[row.country_id] = fromMysqlDate(row.joined_at) ?? row.joined_at
+    }
 
     return {
       allianceName: alliance.name,
@@ -570,6 +613,7 @@ export async function getDbFederation(period: Period): Promise<{
         rank: null,
         meta: { country: row.country_name ?? row.country_id, code: row.code },
       }))),
+      memberJoinedAts,
       updatedAt: fromMysqlDate(alliance.updated_at),
     }
   })
@@ -1034,6 +1078,105 @@ export async function recordCitizenshipSnapshot(args: {
        VALUES (?, ?, ?, NULL, ?, ?, ?)`,
       [userId, countryId, validFromMysql, source, confidence, lastChangeMysql],
     )
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Alliance membership history (append-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Records membership changes for an alliance. Call after every
+ * `alliance.getById` refresh with the current list of member country IDs.
+ *
+ * New countries → INSERT with joined_at = now.
+ * Missing countries (were in the previous open set but not in currentIds)
+ *   → UPDATE left_at = now.
+ */
+export async function recordAllianceMembershipSnapshot(
+  allianceId: string,
+  currentIds: string[],
+): Promise<void> {
+  if (!currentIds.length) return
+  await withWareraDb('recordAllianceMembership', async (db) => {
+    const now = new Date().toISOString()
+    const nowMysql = toMysqlDate(now)
+
+    // Get currently open members (left_at IS NULL)
+    const [prev] = await db.execute<DbRow<{ country_id: string }>[]>(
+      `SELECT country_id FROM warera_alliance_membership_history
+       WHERE alliance_id = ? AND left_at IS NULL`,
+      [allianceId],
+    )
+    const prevSet = new Set(prev.map((r) => r.country_id))
+    const currSet = new Set(currentIds)
+
+    // Insert new members
+    for (const cid of currentIds) {
+      if (!prevSet.has(cid)) {
+        await db.execute(
+          `INSERT INTO warera_alliance_membership_history
+             (alliance_id, country_id, joined_at)
+           VALUES (?, ?, ?)`,
+          [allianceId, cid, nowMysql],
+        )
+      }
+    }
+
+    // Mark leavers
+    for (const cid of prevSet) {
+      if (!currSet.has(cid)) {
+        await db.execute(
+          `UPDATE warera_alliance_membership_history
+             SET left_at = ?
+           WHERE alliance_id = ? AND country_id = ? AND left_at IS NULL`,
+          [nowMysql, allianceId, cid],
+        )
+      }
+    }
+  })
+}
+
+/**
+ * Returns the join date of a country into an alliance, or null if never a member.
+ */
+export async function getMembershipJoinDate(
+  allianceId: string,
+  countryId: string,
+): Promise<string | null> {
+  const result = await withWareraDb('getMembershipJoinDate', async (db) => {
+    const [rows] = await db.execute<DbRow<{ joined_at: string }>[]>(
+      `SELECT joined_at FROM warera_alliance_membership_history
+       WHERE alliance_id = ? AND country_id = ?
+       ORDER BY joined_at ASC LIMIT 1`,
+      [allianceId, countryId],
+    )
+    return fromMysqlDate(rows[0]?.joined_at)
+  })
+  return result ?? null
+}
+
+/**
+ * Cheap standalone query: returns current member country → join date map
+ * for the Federation alliance. Safe to call from non-sync paths (no side effects).
+ */
+export async function getFederationMemberJoinedAts(): Promise<Record<string, string>> {
+  return withWareraDb('getFedMemberJoinedAts', async (db) => {
+    const [alliance] = await db.execute<DbRow<{ alliance_id: string }>[]>(
+      `SELECT alliance_id FROM warera_alliances ORDER BY updated_at DESC LIMIT 1`,
+    )
+    if (!alliance[0]) return {}
+    const [rows] = await db.execute<DbRow<{ country_id: string; joined_at: string }>[]>(
+      `SELECT country_id, joined_at
+       FROM warera_alliance_membership_history
+       WHERE alliance_id = ? AND left_at IS NULL`,
+      [alliance[0].alliance_id],
+    )
+    const map: Record<string, string> = {}
+    for (const r of rows) {
+      map[r.country_id] = fromMysqlDate(r.joined_at) ?? r.joined_at
+    }
+    return map
   })
 }
 

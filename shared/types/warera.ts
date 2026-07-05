@@ -154,6 +154,8 @@ export interface FederationResponse {
   period: Period
   /** Calendar window for `period` (null for "all"). Best-effort, derived from gameConfig.getDates. */
   periodRange?: PeriodRange | null
+  /** Country id → UTC ISO join date. Used by the UI legend to mark recent joiners. */
+  memberJoinedAts?: Record<string, string>
   updatedAt: string
   fromCache: boolean
   dataSource?: 'api' | 'db' | 'mixed'
