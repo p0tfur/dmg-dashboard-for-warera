@@ -2,6 +2,31 @@
 
 export type Period = 'week' | 'month' | 'all'
 
+/**
+ * Subset of `gameConfig.getDates` (UTC ISO timestamps of in-game boundaries).
+ * Used to derive the calendar window covered by the upstream weekly/monthly
+ * DMG buckets, so the UI can show e.g. "Jun 29 – Jul 6" next to "This week".
+ */
+export interface GameDates {
+  nextDayAt?: string | null
+  previousDayAt?: string | null
+  nextRegenAt?: string | null
+  nextMonthAt?: string | null
+  dailyMissionRegenAt?: string | null
+  weeklyMissionRegenAt?: string | null
+  gameDay?: number | null
+  gameMonth?: number | null
+  gameYear?: number | null
+  realDate?: string | null
+  [key: string]: unknown
+}
+
+/** Calendar window [start, end) covered by a period's DMG bucket. Null for "all". */
+export interface PeriodRange {
+  start: string
+  end: string
+}
+
 /** Single record returned by ranking.getRanking / battleRanking.getRanking. */
 export interface RankingEntry {
   rank?: number | null
@@ -127,6 +152,8 @@ export interface FederationResponse {
   byCountry: DamageRow[]
   byMu: DamageRow[]
   period: Period
+  /** Calendar window for `period` (null for "all"). Best-effort, derived from gameConfig.getDates. */
+  periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
@@ -145,6 +172,8 @@ export interface FederationSupportResponse {
   battlesScanned: number
   allyBattlesCount: number
   period: Period
+  /** Calendar window for `period` (null for "all"). Best-effort, derived from gameConfig.getDates. */
+  periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
   /**
@@ -166,6 +195,8 @@ export interface JusticeResponse {
   byCountry: DamageRow[]
   byPlayer: PlayerRow[]
   period: Period
+  /** Calendar window for `period` (null for "all"). Best-effort, derived from gameConfig.getDates. */
+  periodRange?: PeriodRange | null
   updatedAt: string
   fromCache: boolean
   rateLimit?: { remaining?: number | null; limit?: number | null } | null

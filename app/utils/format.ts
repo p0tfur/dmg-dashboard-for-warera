@@ -39,3 +39,25 @@ export const PERIOD_LABEL: Record<string, string> = {
   month: 'This month',
   all: 'All time',
 }
+
+/**
+ * Formats a `[start, end)` calendar window as a compact range like
+ * "Jun 29 – Jul 6" (UTC, short month + day). Returns an empty string when
+ * the range is missing or unparseable, so callers can use it inline without
+ * conditional wrappers. The window comes from `gameConfig.getDates` and is
+ * always UTC midnight boundaries, so we format in UTC for consistency.
+ */
+export function formatPeriodRange(
+  r: { start?: string | null; end?: string | null } | null | undefined,
+): string {
+  if (!r?.start || !r?.end) return ''
+  const s = new Date(r.start)
+  const e = new Date(r.end)
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return ''
+  const opts: Intl.DateTimeFormatOptions = {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }
+  return `${s.toLocaleDateString('en-US', opts)} – ${e.toLocaleDateString('en-US', opts)}`
+}

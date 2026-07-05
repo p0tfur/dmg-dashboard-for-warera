@@ -4,10 +4,12 @@ import type {
   DamageRow,
   FederationResponse,
   FederationSupportResponse,
+  GameDates,
   JusticeResponse,
   JusticePlayerDailyResponse,
   MetaResponse,
   Period,
+  PeriodRange,
   PlayerRow,
 } from '~~/shared/types/warera'
 
@@ -92,6 +94,81 @@ function finalizeRows(rows: DamageRow[]): DamageRow[] {
   rows.sort((a, b) => b.damage - a.damage)
   rows.forEach((r, i) => (r.rank = i + 1))
   return rows
+}
+
+// ---------------- Game dates (calendar windows for period labels) ----------------
+//
+// The upstream weekly/monthly DMG counters (`weeklyDamagesCount`,
+// `monthlyDamagesCount`, `rankings.*WeeklyDamages`, etc.) are pre-aggregated
+// by the game — we never tell the upstream which window we want, it just
+// returns its own buckets. `gameConfig.getDates` exposes the in-game
+// boundaries (UTC ISO timestamps) that those buckets reset on, so we can
+// derive a calendar window to show next to "This week" / "This month".
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+/** SWR-cached `gameConfig.getDates` (5 min TTL — values change at most daily). Best-effort: returns null on failure. */
+async function getGameDates(): Promise<GameDates | null> {
+  try {
+    const { data } = await swr<GameDates | null>(
+      'gameConfig.getDates',
+      5 * 60 * 1000,
+      async () => {
+        const raw = await trpcGet<any>('gameConfig.getDates', {})
+        return (raw as GameDates | null) ?? null
+      },
+    )
+    return data
+  } catch (err) {
+    console.warn(
+      `[warera] getGameDates failed; period ranges will be hidden (${(err as Error)?.message ?? err})`,
+    )
+    return null
+  }
+}
+
+/**
+ * Derives the calendar window `[start, end)` that the upstream DMG bucket for
+ * `period` most likely covers, based on `gameConfig.getDates`.
+ *
+ * - `week`:  `[weeklyMissionRegenAt - 7d, weeklyMissionRegenAt)` — the game's
+ *   weekly reset (Monday 00:00 UTC, observed live) is the upper bound. We
+ *   assume the weekly DMG counter resets on the same boundary as weekly
+ *   missions (strongly suggested by the field name; not yet empirically
+ *   verified at the time of writing).
+ * - `month`: `[first day of current UTC month 00:00, nextMonthAt)` —
+ *   `nextMonthAt` is the next month boundary (e.g. 2026-08-01T00:00:00.000Z),
+ *   so the current month started at the previous boundary.
+ * - `all`:   `null` (unbounded).
+ *
+ * Returns `null` if `dates` is missing or the required boundary is absent /
+ * unparseable — the UI then simply hides the date-range chip.
+ */
+function computePeriodRange(
+  period: Period,
+  dates: GameDates | null,
+): PeriodRange | null {
+  if (!dates || period === 'all') return null
+
+  if (period === 'week') {
+    const end = dates.weeklyMissionRegenAt
+    if (!end) return null
+    const endTs = Date.parse(end)
+    if (isNaN(endTs)) return null
+    return { start: new Date(endTs - WEEK_MS).toISOString(), end }
+  }
+
+  // period === 'month'
+  const end = dates.nextMonthAt
+  if (!end) return null
+  const e = new Date(end)
+  if (isNaN(e.getTime())) return null
+  // First day of the month that `end` falls in is the *next* month's start;
+  // the current month therefore started at the previous month's first day.
+  // Date.UTC handles year rollover when month index is negative.
+  const start = new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() - 1, 1))
+  if (isNaN(start.getTime())) return null
+  return { start: start.toISOString(), end }
 }
 
 // ---------------- Base entities (long-term cache) ----------------
@@ -417,6 +494,9 @@ export async function getFederationData(period: Period): Promise<FederationRespo
     ...(data as FederationResponse),
     fromCache,
     updatedAt: new Date().toISOString(),
+    // Range is computed outside the SWR callback so a briefly-stale DMG cache
+    // still shows the *current* week/month window (TTL is only 45s for "week").
+    periodRange: computePeriodRange(period, await getGameDates()),
   }
 }
 
@@ -689,10 +769,13 @@ export async function getFederationSupportData(
 ): Promise<FederationSupportResponse> {
   const entry = supportCache.get(period)
   const now = Date.now()
+  // Range is computed up front (cheap, SWR-cached) so all return paths can
+  // attach it — including the `building` placeholder.
+  const periodRange = computePeriodRange(period, await getGameDates())
 
   // 1. Fresh cache — serve directly.
   if (entry?.data && entry.expiresAt > now) {
-    return { ...entry.data, fromCache: true }
+    return { ...entry.data, fromCache: true, periodRange }
   }
 
   // 2. Stale cache — return stale immediately, revalidate in background.
@@ -705,7 +788,7 @@ export async function getFederationSupportData(
           if (e) e.promise = undefined
         })
     }
-    return { ...entry.data, fromCache: true }
+    return { ...entry.data, fromCache: true, periodRange }
   }
 
   // 3. No cache — kick off the build, return placeholder.
@@ -719,7 +802,7 @@ export async function getFederationSupportData(
     supportCache.set(period, { promise, expiresAt: 0 })
   }
 
-  return emptySupport(period, true)
+  return { ...emptySupport(period, true), periodRange }
 }
 
 // ---------------- JUSTICE ----------------
@@ -813,6 +896,9 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
     ...(data as JusticeResponse),
     fromCache,
     updatedAt: new Date().toISOString(),
+    // Range is computed outside the SWR callback so a briefly-stale DMG cache
+    // still shows the *current* week/month window.
+    periodRange: computePeriodRange(period, await getGameDates()),
   }
 }
 

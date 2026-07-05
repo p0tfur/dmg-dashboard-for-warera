@@ -3,7 +3,7 @@ import {
   Swords, Globe2, Users, Trophy, Shield, Layers, Activity, Crosshair,
   HeartHandshake, Loader2, Info,
 } from 'lucide-vue-next'
-import { formatDamage, formatFull, PERIOD_LABEL } from '~/utils/format'
+import { formatDamage, formatFull, formatPeriodRange, PERIOD_LABEL } from '~/utils/format'
 import type { JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
 
 const { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh } = useDashboard()
@@ -164,7 +164,9 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               </span>
             </div>
             <p class="text-xs text-zinc-500 mt-0.5">
-              Damage {{ PERIOD_LABEL[fedPeriod] }} ·
+              Damage {{ PERIOD_LABEL[fedPeriod] }}
+              <span v-if="formatPeriodRange(fed?.periodRange)" class="data-mono text-zinc-600">· {{ formatPeriodRange(fed?.periodRange) }}</span>
+              ·
               <span class="data-mono">{{ fed ? formatFull(fed.totalDamage) : '…' }}</span> total
             </p>
           </div>
@@ -230,7 +232,10 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span>
                 Ally battles <span class="data-mono text-zinc-400">{{ fedSup?.allyBattlesCount ?? '…' }}</span>
               </span>
-              <span>{{ PERIOD_LABEL[fedPeriod] }}</span>
+              <span>
+                {{ PERIOD_LABEL[fedPeriod] }}
+                <span v-if="formatPeriodRange(fedSup?.periodRange)" class="normal-case data-mono text-zinc-500">· {{ formatPeriodRange(fedSup?.periodRange) }}</span>
+              </span>
             </div>
           </div>
 
@@ -326,7 +331,9 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               </span>
             </div>
             <p class="text-xs text-zinc-500 mt-0.5">
-              Damage {{ PERIOD_LABEL[period] }} ·
+              Damage {{ PERIOD_LABEL[period] }}
+              <span v-if="formatPeriodRange(jus?.periodRange)" class="data-mono text-zinc-600">· {{ formatPeriodRange(jus?.periodRange) }}</span>
+              ·
               <span class="data-mono">{{ jus ? formatFull(jus.totalDamage) : '…' }}</span> total
             </p>
           </div>
