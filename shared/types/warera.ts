@@ -189,6 +189,39 @@ export interface FederationSupportResponse {
   rateLimit?: { remaining?: number | null; limit?: number | null } | null
 }
 
+/**
+ * A single recipient entry in a supporter country's ally-support breakdown:
+ * "country X supported recipient Y with Z damage". Returned by
+ * `getFederationSupportBreakdown`.
+ */
+export interface SupportRecipientRow {
+  id: string
+  name: string
+  code: string | null
+  damage: number
+  share: number // 0..1 share of the supporter's total support damage
+}
+
+/**
+ * On-demand breakdown of one Federation member's ally-support damage by
+ * recipient country (i.e. which allies it helped and how much). Fetched only
+ * when a user expands a country in the "Ally support DMG per country" table.
+ */
+export interface FederationSupportBreakdownResponse {
+  supporterCountryId: string
+  period: Period
+  /** Calendar window for `period` (null for "all"). Best-effort, derived from gameConfig.getDates. */
+  periodRange?: PeriodRange | null
+  totalSupportDamage: number
+  recipients: SupportRecipientRow[]
+  battlesScanned: number
+  updatedAt: string
+  fromCache: boolean
+  dataSource?: 'db'
+  syncLagSeconds?: number | null
+  rateLimit?: { remaining?: number | null; limit?: number | null } | null
+}
+
 export interface JusticeResponse {
   muName: string
   avatarUrl?: string | null

@@ -2,6 +2,7 @@ import { trpcGet, getRateLimitState, waitForBudget } from './wareraClient'
 import {
   getDbFederation,
   getDbFederationSupport,
+  getDbFederationSupportBreakdown,
   getDbJustice,
   getDbJusticePlayerDaily,
   getSyncFreshness,
@@ -11,6 +12,7 @@ import type {
   DailyDamagePoint,
   DamageRow,
   FederationResponse,
+  FederationSupportBreakdownResponse,
   FederationSupportResponse,
   GameDates,
   JusticeResponse,
@@ -858,6 +860,35 @@ export async function getFederationSupportData(
   return { ...emptySupport(period, true), periodRange }
 }
 
+/**
+ * Per-recipient breakdown of one Federation member's ally-support damage.
+ * Pure DB query (no upstream scan), so it returns immediately. Used by the
+ * "Ally support DMG per country" table expand-on-click.
+ */
+export async function getFederationSupportBreakdown(
+  countryId: string,
+  period: Period,
+): Promise<FederationSupportBreakdownResponse> {
+  ensureWareraDbSyncStarted()
+  const dbData = await getDbFederationSupportBreakdown(countryId, period)
+  const freshness = await getSyncFreshness('federation-battles')
+  const periodRange = computePeriodRange(period, await getGameDates())
+
+  return {
+    supporterCountryId: countryId,
+    period,
+    periodRange,
+    totalSupportDamage: dbData?.totalSupportDamage ?? 0,
+    recipients: dbData?.recipients ?? [],
+    battlesScanned: dbData?.battlesScanned ?? 0,
+    updatedAt: dbData?.updatedAt ?? new Date().toISOString(),
+    fromCache: false,
+    dataSource: 'db',
+    syncLagSeconds: freshness.lagSeconds,
+    rateLimit: getRateLimitState(),
+  }
+}
+
 // ---------------- JUSTICE ----------------
 
 export async function getJusticeData(period: Period): Promise<JusticeResponse> {
@@ -1068,6 +1099,145 @@ async function getBattleUserDamage(battleId: string, userId: string): Promise<nu
   }
 
   return 0
+}
+
+export interface UserCountryAttributionDebugResponse {
+  userId: string
+  playerName: string
+  currentCountryId: string | null
+  currentCountryName: string | null
+  lastCitizenshipChangeAt: string | null
+  oldestFetchedBattleAt: string | null
+  scannedBattles: number
+  samplesBefore: Array<{
+    battleId: string
+    refAt: string
+    countryId: string | null
+    countryName: string | null
+    damage: number
+    rank: number | null
+  }>
+  samplesAfter: Array<{
+    battleId: string
+    refAt: string
+    countryId: string | null
+    countryName: string | null
+    damage: number
+    rank: number | null
+  }>
+}
+
+async function getBattleUserAttribution(
+  battleId: string,
+  userId: string,
+): Promise<{
+  countryId: string | null
+  damage: number
+  rank: number | null
+} | null> {
+  let cursor: string | undefined
+  let guard = 0
+
+  while (guard < 20) {
+    await waitForBudget(15)
+    const raw = await trpcGet<any>('battleRanking.getRanking', {
+      battleId,
+      dataType: 'damage',
+      type: 'user',
+      side: 'merged',
+      limit: 100,
+      cursor,
+    }, 1)
+
+    const items = raw?.items ?? (Array.isArray(raw) ? raw : [])
+    const hit = items.find((item: any) => item?.user === userId)
+    if (hit) {
+      return {
+        countryId: hit?.country_id ?? hit?.countryId ?? hit?.country ?? null,
+        damage: Number(hit?.value ?? 0),
+        rank: hit?.rank ?? null,
+      }
+    }
+
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+    guard++
+  }
+
+  return null
+}
+
+export async function debugUserCountryAttribution(
+  userId: string,
+  maxBattlePages = 50,
+): Promise<UserCountryAttributionDebugResponse> {
+  const safePages = Math.min(Math.max(Math.floor(maxBattlePages || 50), 1), 50)
+  const [profile, { byId: countries }] = await Promise.all([
+    getUserProfile(userId),
+    getCountries(),
+  ])
+  const rawProfile = await trpcGet<any>('user.getUserLite', { userId }, 1)
+  const lastCitizenshipChangeAt = rawProfile?.dates?.lastCitizenshipChangeAt ?? rawProfile?.dates?.last_citizenship_change_at ?? null
+  const changeTs = lastCitizenshipChangeAt ? Date.parse(lastCitizenshipChangeAt) : NaN
+
+  const samplesBefore: UserCountryAttributionDebugResponse['samplesBefore'] = []
+  const samplesAfter: UserCountryAttributionDebugResponse['samplesAfter'] = []
+  let cursor: string | undefined
+  let oldestFetchedBattleAt: string | null = null
+  let scannedBattles = 0
+
+  for (let pageIndex = 0; pageIndex < safePages; pageIndex++) {
+    await waitForBudget(20)
+    const raw = await trpcGet<any>('battle.getBattles', {
+      userId,
+      isActive: false,
+      limit: 100,
+      direction: 'backward',
+      cursor,
+    }, 1)
+    const items: BattleListItem[] = raw?.items ?? (Array.isArray(raw) ? raw : [])
+    if (!items.length) break
+
+    for (const battle of items) {
+      const refAt = battle.endedAt ?? battle.createdAt ?? null
+      if (!refAt) continue
+      oldestFetchedBattleAt = refAt
+      scannedBattles++
+
+      const ts = Date.parse(refAt)
+      const isBefore = Number.isFinite(changeTs) && Number.isFinite(ts) && ts < changeTs
+      const target = isBefore ? samplesBefore : samplesAfter
+      if (target.length >= 3) continue
+
+      const attribution = await getBattleUserAttribution(battle._id, userId)
+      if (!attribution) continue
+
+      target.push({
+        battleId: battle._id,
+        refAt,
+        countryId: attribution.countryId,
+        countryName: attribution.countryId ? countries.get(attribution.countryId)?.name ?? null : null,
+        damage: attribution.damage,
+        rank: attribution.rank,
+      })
+    }
+
+    if (samplesBefore.length >= 3 && samplesAfter.length >= 3) break
+    cursor = raw?.nextCursor ?? undefined
+    if (!cursor) break
+  }
+
+  return {
+    userId,
+    playerName: profile.name,
+    currentCountryId: profile.country,
+    currentCountryName: profile.country ? countries.get(profile.country)?.name ?? null : null,
+    lastCitizenshipChangeAt,
+    oldestFetchedBattleAt,
+    scannedBattles,
+    samplesBefore,
+    samplesAfter,
+  }
 }
 
 async function buildJusticePlayerDailyData(

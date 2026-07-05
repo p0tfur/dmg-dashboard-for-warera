@@ -4,7 +4,7 @@ import {
   HeartHandshake, Loader2, Info,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, formatPeriodRange, PERIOD_LABEL } from '~/utils/format'
-import type { DamageRow, JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
+import type { DamageRow, FederationSupportBreakdownResponse, JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
 
 const { period, fedPeriod, live, lastUpdated, meta, federation, federationSupport, justice, refresh } = useDashboard()
 
@@ -127,6 +127,39 @@ function selectJusticeCountry(country: DamageRow) {
   selectedJusticeCountry.value = country
 }
 
+// ---- Federation support breakdown (expand a country to see recipients) ----
+const selectedSupportCountry = ref<DamageRow | null>(null)
+const supportBreakdown = ref<FederationSupportBreakdownResponse | null>(null)
+const supportBreakdownLoading = ref(false)
+const supportBreakdownError = ref<string | null>(null)
+
+async function selectSupportCountry(country: DamageRow) {
+  if (selectedSupportCountry.value?.id === country.id) {
+    selectedSupportCountry.value = null
+    supportBreakdown.value = null
+    supportBreakdownError.value = null
+    supportBreakdownLoading.value = false
+    return
+  }
+
+  selectedSupportCountry.value = country
+  supportBreakdown.value = null
+  supportBreakdownLoading.value = true
+  supportBreakdownError.value = null
+
+  try {
+    supportBreakdown.value = await $fetch<FederationSupportBreakdownResponse>(
+      '/api/federationSupportBreakdown',
+      { query: { countryId: country.id, period: fedPeriod.value } },
+    )
+  } catch (error: any) {
+    supportBreakdown.value = null
+    supportBreakdownError.value = error?.data?.statusMessage ?? error?.message ?? 'Unknown error'
+  } finally {
+    supportBreakdownLoading.value = false
+  }
+}
+
 watch(period, () => {
   justicePlayerDailyRequest++
   stopJusticePlayerDailyPolling()
@@ -135,6 +168,10 @@ watch(period, () => {
   justicePlayerDaily.value = null
   justicePlayerDailyError.value = null
   justicePlayerDailyLoading.value = false
+  selectedSupportCountry.value = null
+  supportBreakdown.value = null
+  supportBreakdownError.value = null
+  supportBreakdownLoading.value = false
 })
 
 onBeforeUnmount(() => {
@@ -232,15 +269,20 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
         <!-- Ally support DMG (full width) -->
         <div class="panel clip-corner panel-glow-fed mt-5">
           <div class="flex items-center justify-between px-4 py-3 border-b border-white/5 gap-3 flex-wrap">
-            <div class="flex items-center gap-2 min-w-0">
-              <HeartHandshake class="h-4 w-4 text-fed-glow shrink-0" />
-              <h3 class="heading-display text-sm text-zinc-200">Ally support DMG per country</h3>
-              <span
-                class="hidden md:inline text-[11px] text-zinc-500 truncate"
-                title="Support = DMG in OTHER allies' battles. Own = DMG in this country's own battles (attacker or defender)."
-              >
-                · Support vs Own battles
-              </span>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 min-w-0">
+                <HeartHandshake class="h-4 w-4 text-fed-glow shrink-0" />
+                <h3 class="heading-display text-sm text-zinc-200">Ally support DMG per country</h3>
+                <span
+                  class="hidden md:inline text-[11px] text-zinc-500 truncate"
+                  title="Support = DMG in OTHER allies' battles. Own = DMG in this country's own battles (attacker or defender)."
+                >
+                  · Support vs Own battles
+                </span>
+              </div>
+              <p class="mt-1 text-[11px] text-zinc-500">
+                Click a country to see which allies it supported and how much damage it dealt.
+              </p>
             </div>
             <div class="flex items-center gap-3 text-[10px] uppercase tracking-wider text-zinc-600">
               <span>
@@ -316,7 +358,19 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 show-flag
                 :limit="50"
                 :secondary="{ key: 'ownDamage', label: 'Own DMG', accent: 'danger' }"
-              />
+                :selected-id="selectedSupportCountry?.id ?? null"
+                @select="selectSupportCountry"
+              >
+                <template #expanded="{ row }">
+                  <SupportBreakdownCard
+                    v-if="selectedSupportCountry?.id === row.id"
+                    :country="row"
+                    :data="supportBreakdown"
+                    :loading="supportBreakdownLoading"
+                    :error="supportBreakdownError"
+                  />
+                </template>
+              </DamageTable>
             </div>
           </div>
         </div>
@@ -370,9 +424,14 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
           <div class="panel clip-corner panel-glow-just">
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
-              <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
-                <Globe2 class="h-4 w-4 text-just" /> DMG per country
-              </h3>
+              <div class="min-w-0">
+                <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
+                  <Globe2 class="h-4 w-4 text-just" /> DMG per country
+                </h3>
+                <p class="mt-1 text-[11px] text-zinc-500">
+                  Click a country to see which Justice players contributed damage.
+                </p>
+              </div>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[period] }}</span>
             </div>
             <div class="px-2 py-1">

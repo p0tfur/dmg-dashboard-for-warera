@@ -1,6 +1,6 @@
 import type { ResultSetHeader } from 'mysql2/promise'
 import { fromMysqlDate, jsonParam, toMysqlDate, withWareraDb, withWareraDbConnection, type DbRow } from './wareraDb'
-import type { DailyDamagePoint, DamageRow, Period, PlayerRow } from '~~/shared/types/warera'
+import type { DailyDamagePoint, DamageRow, Period, PlayerRow, SupportRecipientRow } from '~~/shared/types/warera'
 
 export interface CountrySnapshot {
   id: string
@@ -102,6 +102,7 @@ export interface BattleRankingSnapshot {
   battleId: string
   entityType: 'user' | 'country' | 'mu'
   entityId: string
+  attributedCountryId?: string | null
   side: 'attacker' | 'defender' | 'merged'
   damage: number
   rank: number | null
@@ -368,11 +369,21 @@ export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): P
     for (const r of rankings) {
       await db.execute(
         `INSERT INTO warera_battle_rankings
-         (battle_id, entity_type, entity_id, side, damage, ranking_position, raw_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+         (battle_id, entity_type, entity_id, attributed_country_id, side, damage, ranking_position, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE damage = VALUES(damage), ranking_position = VALUES(ranking_position),
+           attributed_country_id = COALESCE(VALUES(attributed_country_id), attributed_country_id),
            raw_json = VALUES(raw_json)`,
-        [r.battleId, r.entityType, r.entityId, r.side, r.damage, r.rank, jsonParam(r.raw)],
+        [
+          r.battleId,
+          r.entityType,
+          r.entityId,
+          r.attributedCountryId ?? null,
+          r.side,
+          r.damage,
+          r.rank,
+          jsonParam(r.raw),
+        ],
       )
     }
   })
@@ -721,6 +732,105 @@ export async function getDbFederationSupport(period: Period): Promise<{
       byCountry,
       battlesScanned: Number(counts[0]?.battles_scanned ?? 0),
       allyBattlesCount: Number(counts[0]?.ally_battles_count ?? 0),
+      updatedAt: fromMysqlDate(counts[0]?.updated_at),
+    }
+  })
+}
+
+/**
+ * Per-recipient breakdown of one Federation member's ally-support damage:
+ * for the given supporter `countryId`, how much damage it dealt in each
+ * OTHER ally's battles, grouped by the recipient (owner) country.
+ * Mirrors the `support_damage` semantics of `getDbFederationSupport` but for
+ * a single supporter, grouped by recipient.
+ */
+export async function getDbFederationSupportBreakdown(
+  countryId: string,
+  period: Period,
+): Promise<{
+  totalSupportDamage: number
+  recipients: SupportRecipientRow[]
+  battlesScanned: number
+  updatedAt: string | null
+} | null> {
+  return withWareraDb('getDbFederationSupportBreakdown', async (db) => {
+    const [alliances] = await db.execute<DbRow<{ member_country_ids: string | string[] | null }>[]>(
+      'SELECT member_country_ids FROM warera_alliances ORDER BY updated_at DESC LIMIT 1',
+    )
+    const memberIds = Array.isArray(alliances[0]?.member_country_ids)
+      ? alliances[0].member_country_ids
+      : (JSON.parse(String(alliances[0]?.member_country_ids || '[]')) as string[])
+    if (!memberIds.length) return null
+
+    const since = period === 'week'
+      ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      : null
+
+    // One grouped query: determine the Fed "owner" of each ally battle the
+    // supporter participated in, exclude battles where the supporter IS the
+    // owner, then sum the supporter's damage grouped by recipient.
+    const [rows] = await db.query<DbRow<{
+      recipient_id: string
+      recipient_name: string | null
+      recipient_code: string | null
+      support_damage: number
+    }[]>>(
+      `SELECT o.owner_country_id AS recipient_id, rc.name AS recipient_name, rc.code AS recipient_code,
+         SUM(o.damage) AS support_damage
+       FROM (
+         SELECT
+           CASE
+             WHEN b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?) THEN b.defender_country_id
+             WHEN b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?) THEN b.attacker_country_id
+           END AS owner_country_id,
+           r.damage AS damage
+         FROM warera_battles b
+         JOIN warera_battle_rankings r
+           ON r.battle_id = b.battle_id AND r.entity_type = 'country' AND r.side = 'merged'
+         WHERE r.entity_id = ?
+           AND ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
+              OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
+           ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
+       ) o
+       LEFT JOIN warera_countries rc ON rc.country_id = o.owner_country_id
+       WHERE o.owner_country_id IS NOT NULL AND o.owner_country_id <> ?
+       GROUP BY o.owner_country_id, rc.name, rc.code
+       ORDER BY support_damage DESC`,
+      [
+        memberIds, memberIds, memberIds, memberIds,
+        countryId,
+        memberIds, memberIds, memberIds, memberIds,
+        ...(since ? [toMysqlDate(since)] : []),
+        countryId,
+      ],
+    )
+
+    const [counts] = await db.query<DbRow<{ battles_scanned: number; updated_at: string | null }>[]>(
+      `SELECT COUNT(*) AS battles_scanned, MAX(synced_at) AS updated_at
+       FROM warera_battles
+       WHERE (defender_country_id IN (?) OR attacker_country_id IN (?))
+         ${since ? 'AND COALESCE(ended_at, created_at) >= ?' : ''}`,
+      [memberIds, memberIds, ...(since ? [toMysqlDate(since)] : [])],
+    )
+
+    const recipients: SupportRecipientRow[] = rows.map((row) => ({
+      id: row.recipient_id,
+      name: row.recipient_name ?? row.recipient_id,
+      code: row.recipient_code ?? null,
+      damage: Number(row.support_damage),
+      share: 0,
+    }))
+    const totalSupportDamage = recipients.reduce((sum, r) => sum + r.damage, 0) || 1
+    recipients.forEach((r) => {
+      r.share = r.damage / totalSupportDamage
+    })
+
+    const realTotal = recipients.reduce((sum, r) => sum + r.damage, 0)
+
+    return {
+      totalSupportDamage: realTotal,
+      recipients,
+      battlesScanned: Number(counts[0]?.battles_scanned ?? 0),
       updatedAt: fromMysqlDate(counts[0]?.updated_at),
     }
   })

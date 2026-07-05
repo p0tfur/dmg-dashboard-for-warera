@@ -316,6 +316,9 @@ async function fetchBattleRankings(
       battleId,
       entityType,
       entityId,
+      attributedCountryId: entityType === 'user'
+        ? item?.country_id ?? item?.countryId ?? item?.country ?? null
+        : null,
       side,
       damage: Number(item?.value ?? 0),
       rank: item?.rank ?? null,
