@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Swords, Globe2, Users, Trophy, Shield, Layers, Activity, Crosshair,
-  HeartHandshake, Loader2,
+  HeartHandshake, Loader2, Info,
 } from 'lucide-vue-next'
 import { formatDamage, formatFull, PERIOD_LABEL } from '~/utils/format'
 import type { JusticePlayerDailyResponse, PlayerRow } from '~~/shared/types/warera'
@@ -275,6 +275,13 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 {{ fedSup ? formatDamage(fedSup.totalSupportDamage) : '—' }} support ·
                 {{ fedSup ? formatDamage(fedSupOwnTotal) : '—' }} own ·
                 {{ fedSup?.byCountry?.length ?? 0 }} countries
+              </p>
+              <p class="mt-2 text-[11px] text-zinc-600 flex items-start gap-1.5">
+                <Info class="h-3 w-3 text-zinc-500 shrink-0 mt-0.5" />
+                <span>
+                  <span class="text-fed-glow font-semibold">Support</span> = DMG in OTHER allies' battles.
+                  <span class="text-danger font-semibold">Own</span> = DMG in this country's own battles (attacker or defender).
+                </span>
               </p>
             </div>
 

@@ -36,6 +36,7 @@ const maxDamage = computed(() =>
 
 const barEdge = computed(() => (props.accent === 'fed' ? 'bg-fed' : 'bg-just'))
 const rankText = computed(() => (props.accent === 'fed' ? 'text-fed/70' : 'text-just/70'))
+const primaryAccentText = computed(() => (props.accent === 'fed' ? 'text-fed-glow' : 'text-just-glow'))
 const secondaryAccentText = computed(() => {
   const a = props.secondary?.accent ?? 'danger'
   if (a === 'fed') return 'text-fed-glow'
@@ -117,7 +118,8 @@ function secondaryValue(r: T): number | null {
             </td>
 
             <td
-              class="py-2.5 px-2 text-right data-mono font-semibold text-zinc-100"
+              class="py-2.5 px-2 text-right data-mono font-semibold"
+              :class="primaryAccentText"
               :title="formatFull(r.damage)"
             >
               {{ formatDamage(r.damage) }}
