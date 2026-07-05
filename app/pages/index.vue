@@ -237,6 +237,11 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span v-if="formatPeriodRange(fed?.periodRange)" class="data-mono text-zinc-600">· {{ formatPeriodRange(fed?.periodRange) }}</span>
               ·
               <span class="data-mono">{{ fed ? formatFull(fed.totalDamage) : '…' }}</span> total
+              <span
+                class="ml-1 text-[10px] text-zinc-600 cursor-help border-b border-dotted border-zinc-700"
+                title="Sum of all member country damage since each country joined The Federation. Based on our own tracked battle history, not the game's lifetime stats.">
+                ?
+              </span>
             </p>
           </div>
         </div>
@@ -248,8 +253,10 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
 
         <!-- KPIs -->
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-          <KpiCard label="Total DMG" :value="fed?.totalDamage" :icon="Swords" accent="fed" :loading="fedLoading" />
-          <KpiCard label="Member Countries" :value="fed?.memberCountryCount" :icon="Globe2" accent="fed" :loading="fedLoading" />
+          <KpiCard label="Total DMG" :value="fed?.totalDamage" :icon="Swords" accent="fed" :loading="fedLoading"
+            tooltip="Sum of member country damage from our tracked battle history. Counted only from battles after each country joined The Federation." />
+          <KpiCard label="Member Countries" :value="fed?.memberCountryCount" :icon="Globe2" accent="fed" :loading="fedLoading"
+            tooltip="Current number of countries in The Federation. See membership legend below for join dates." />
           <KpiCard label="Military Units" :value="fed?.muCount" :icon="Layers" accent="fed" :loading="fedLoading" />
           <KpiCard label="Global Rank" :value="fed?.globalRank" :icon="Trophy" accent="fed" :loading="fedLoading" />
         </div>
@@ -260,6 +267,11 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
             <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
               <h3 class="heading-display text-sm text-zinc-200 flex items-center gap-2">
                 <Globe2 class="h-4 w-4 text-fed" /> DMG per country
+                <span
+                  class="text-[10px] text-zinc-600 font-normal normal-case tracking-normal cursor-help border-b border-dotted border-zinc-700"
+                  title="Cumulative damage dealt by each member country in battles since joining The Federation. Based on our own tracked battle history.">
+                  ?
+                </span>
               </h3>
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
@@ -272,6 +284,11 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <div class="flex items-center gap-1.5 mb-1.5">
                 <Info class="h-3 w-3 text-zinc-600" />
                 <span class="text-[10px] font-medium uppercase tracking-widest text-zinc-600">Membership</span>
+                <span
+                  class="text-[10px] text-zinc-600 cursor-help border-b border-dotted border-zinc-700"
+                  title="Damage for each country is counted only from battles after its join date. Amber dot = joined within the last 30 days.">
+                  ?
+                </span>
               </div>
               <div class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500">
                 <span v-for="(date, cid) in fed.memberJoinedAts" :key="cid" class="inline-flex items-center gap-1">

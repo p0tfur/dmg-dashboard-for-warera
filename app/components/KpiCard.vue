@@ -10,6 +10,7 @@ const props = withDefaults(
     accent?: 'fed' | 'just'
     suffix?: string
     loading?: boolean
+    tooltip?: string
   }>(),
   { accent: 'fed', loading: false },
 )
@@ -54,7 +55,11 @@ const accentRing = computed(() =>
   <div class="panel clip-corner-sm px-4 py-3 relative overflow-hidden">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <div class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold">
+        <div
+          class="text-[10px] uppercase tracking-[0.18em] text-zinc-500 font-semibold"
+          :title="tooltip ?? undefined"
+          :class="{ 'cursor-help border-b border-dotted border-zinc-700': tooltip }"
+        >
           {{ label }}
         </div>
         <div v-if="loading" class="skel h-7 w-24 mt-1.5 rounded-sm" />
