@@ -276,7 +276,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="fed?.byCountry ?? []" :loading="fedLoading" accent="fed" show-flag />
+              <DamageTable :rows="fed?.byCountry ?? []" :loading="fedLoading" accent="fed" show-flag show-money />
             </div>
 
             <!-- Membership legend -->
@@ -309,7 +309,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" :collapsed-limit="15" />
+              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" :collapsed-limit="15" show-money />
             </div>
           </div>
         </div>
@@ -487,6 +487,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 :rows="jus?.byCountry ?? []"
                 :loading="jusLoading"
                 accent="just"
+                show-money
                 show-flag
                 :selected-id="selectedJusticeCountry?.id ?? null"
                 @select="selectJusticeCountry"
@@ -517,6 +518,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <PlayerTable
                 :rows="jus?.byPlayer ?? []"
                 :loading="jusLoading"
+                show-money
                 :selected-id="selectedJusticePlayer?.id ?? null"
                 @select="selectJusticePlayer"
               >

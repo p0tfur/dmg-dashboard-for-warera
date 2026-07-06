@@ -108,7 +108,20 @@ export interface BattleRankingSnapshot {
   attributionConfidence?: AttributionConfidence
   side: 'attacker' | 'defender' | 'merged'
   damage: number
+  /** Money earned in this battle (from dataType='money' ranking). */
+  money?: number
   rank: number | null
+  raw?: unknown
+}
+
+/** Per-user-per-battle loot: bounty vs mercenary-contract earnings split. */
+export interface BattleLootSnapshot {
+  battleId: string
+  userId: string
+  moneyFromBounty: number
+  moneyFromContract: number
+  totalDmg: number
+  hits: number
   raw?: unknown
 }
 
@@ -387,9 +400,10 @@ export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): P
       await db.execute(
         `INSERT INTO warera_battle_rankings
          (battle_id, entity_type, entity_id, attributed_country_id, attribution_confidence,
-          side, damage, ranking_position, raw_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE damage = VALUES(damage), ranking_position = VALUES(ranking_position),
+          side, damage, money, ranking_position, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE damage = VALUES(damage), money = VALUES(money),
+           ranking_position = VALUES(ranking_position),
            attributed_country_id = COALESCE(VALUES(attributed_country_id), attributed_country_id),
            attribution_confidence = VALUES(attribution_confidence),
            raw_json = VALUES(raw_json)`,
@@ -401,12 +415,74 @@ export async function upsertBattleRankings(rankings: BattleRankingSnapshot[]): P
           r.attributionConfidence ?? 'unknown',
           r.side,
           r.damage,
+          r.money ?? 0,
           r.rank,
           jsonParam(r.raw),
         ],
       )
     }
   })
+}
+
+/** Upserts per-user loot summaries (bounty vs contract breakdown). */
+export async function upsertBattleLoot(loot: BattleLootSnapshot[]): Promise<void> {
+  if (!loot.length) return
+  await withWareraDbConnection('upsertBattleLoot', async (db) => {
+    for (const l of loot) {
+      await db.execute(
+        `INSERT INTO warera_battle_loot
+         (battle_id, user_id, money_from_bounty, money_from_contract, total_dmg, hits, raw_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE money_from_bounty = VALUES(money_from_bounty),
+           money_from_contract = VALUES(money_from_contract), total_dmg = VALUES(total_dmg),
+           hits = VALUES(hits), raw_json = VALUES(raw_json)`,
+        [
+          l.battleId,
+          l.userId,
+          l.moneyFromBounty,
+          l.moneyFromContract,
+          l.totalDmg,
+          l.hits,
+          jsonParam(l.raw),
+        ],
+      )
+    }
+  })
+}
+
+/** Marks a battle as having its money rankings synced (sets money_synced_at). */
+export async function markBattleMoneySynced(battleId: string): Promise<void> {
+  await withWareraDb('markBattleMoneySynced', async (db) => {
+    await db.execute(
+      'UPDATE warera_battles SET money_synced_at = UTC_TIMESTAMP(3) WHERE battle_id = ?',
+      [battleId],
+    )
+  })
+}
+
+/** Returns true if the battle still needs its money rankings backfilled. */
+export async function needsBattleMoneySync(battleId: string): Promise<boolean> {
+  const result = await withWareraDb('needsBattleMoneySync', async (db) => {
+    const [rows] = await db.execute<DbRow<{ money_synced_at: string | null }>[]>(
+      'SELECT money_synced_at FROM warera_battles WHERE battle_id = ?',
+      [battleId],
+    )
+    return !rows[0]?.money_synced_at
+  })
+  return result ?? true
+}
+
+/** Returns up to `limit` battle IDs that need money backfill (oldest first). */
+export async function getBattlesNeedingMoneyBackfill(limit: number): Promise<string[]> {
+  const result = await withWareraDb('getBattlesNeedingMoneyBackfill', async (db) => {
+    const [rows] = await db.execute<DbRow<{ battle_id: string }>[]>(`
+      SELECT battle_id FROM warera_battles
+      WHERE money_synced_at IS NULL
+      ORDER BY COALESCE(ended_at, created_at) ASC
+      LIMIT ?`, [limit])
+    return rows.map((r) => r.battle_id)
+  })
+  return result ?? []
 }
 
 export async function markSyncSuccess(jobName: string, checkpoint?: string | null): Promise<void> {
@@ -486,6 +562,7 @@ export async function getDbFederation(period: Period): Promise<{
   allianceName: string
   avatarUrl: string | null
   totalDamage: number
+  totalMoney: number
   globalRank: number | null
   memberCountryCount: number
   byCountry: DamageRow[]
@@ -531,8 +608,9 @@ export async function getDbFederation(period: Period): Promise<{
       name: string
       code: string | null
       damage: number
+      money: number
     }>[]>(
-      `SELECT c.country_id, c.name, c.code, SUM(r.damage) AS damage
+      `SELECT c.country_id, c.name, c.code, SUM(r.damage) AS damage, SUM(r.money) AS money
        FROM warera_battle_rankings r
        JOIN warera_battles b ON b.battle_id = r.battle_id
        JOIN warera_countries c ON c.country_id = r.entity_id
@@ -554,9 +632,10 @@ export async function getDbFederation(period: Period): Promise<{
       country_name: string | null
       code: string | null
       damage: number
+      money: number
     }>[]>(
       `SELECT m.mu_id, m.name, m.country_id, c.name AS country_name, c.code,
-         SUM(r.damage) AS damage
+         SUM(r.damage) AS damage, SUM(r.money) AS money
        FROM warera_battle_rankings r
        JOIN warera_battles b ON b.battle_id = r.battle_id
        JOIN warera_mus m ON m.mu_id = r.entity_id
@@ -598,6 +677,7 @@ export async function getDbFederation(period: Period): Promise<{
       // instead of the game's pre-aggregated alliance.total_damage which includes
       // pre-membership damage for countries that joined later.
       totalDamage: countryRows.reduce((sum, row) => sum + Number(row.damage), 0),
+      totalMoney: countryRows.reduce((sum, row) => sum + Number(row.money), 0),
       globalRank: period === 'all' ? alliance.global_total_rank : alliance.global_weekly_rank,
       memberCountryCount: memberIds.length,
       byCountry: finalizeDamageRows(countryRows.map((row) => ({
@@ -607,6 +687,7 @@ export async function getDbFederation(period: Period): Promise<{
         share: 0,
         rank: null,
         meta: { code: row.code },
+        money: Number(row.money),
       }))),
       byMu: finalizeDamageRows(muRows.map((row) => ({
         id: row.mu_id,
@@ -615,6 +696,7 @@ export async function getDbFederation(period: Period): Promise<{
         share: 0,
         rank: null,
         meta: { country: row.country_name ?? row.country_id, code: row.code },
+        money: Number(row.money),
       }))),
       memberJoinedAts,
       updatedAt: fromMysqlDate(alliance.updated_at),
@@ -626,6 +708,7 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
   muName: string
   avatarUrl: string | null
   totalDamage: number
+  totalMoney: number
   globalRank: number | null
   memberCount: number
   level: number | null
@@ -670,7 +753,7 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
       [muId],
     )
 
-    const players = playerRows.map((row) => ({
+    const players = playerRows.map((row): PlayerRow => ({
       id: row.user_id,
       name: row.username ?? row.user_id,
       avatarUrl: row.avatar_url,
@@ -679,24 +762,78 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
       damage: Number(row.damage),
       help: Number(row.help),
       rank: null,
+      money: null,
+      moneyBounty: null,
+      moneyContract: null,
     }))
     players.forEach((p, i) => (p.rank = i + 1))
 
-    const countryAgg = new Map<string, { name: string; code: string | null; damage: number }>()
-    for (const row of playerRows) {
-      if (!row.country_id || Number(row.damage) <= 0) continue
-      const current = countryAgg.get(row.country_id)
-      countryAgg.set(row.country_id, {
-        name: row.country_name ?? row.country_id,
-        code: current?.code ?? row.country_code ?? null,
-        damage: (current?.damage ?? 0) + Number(row.damage),
+    // Supplementary money query: aggregate money + bounty/contract from
+    // battle rankings and loot tables for this MU's members.
+    // Date filter mirrors the damage period (week = last 7 days, month = 30, all = no filter).
+    const memberIds = players.map((p) => p.id)
+    const moneyMap = new Map<string, { money: number; bounty: number; contract: number }>()
+    if (memberIds.length) {
+      const moneyDateFilter = period === 'week'
+        ? "AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 7 DAY"
+        : period === 'month'
+          ? "AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 30 DAY"
+          : ''
+      const [moneyRows] = await db.query<DbRow<{
+        user_id: string
+        money: number
+        bounty: number
+        contract: number
+      }>[]>(
+        `SELECT r.entity_id AS user_id,
+           SUM(r.money) AS money,
+           COALESCE(SUM(l.money_from_bounty), 0) AS bounty,
+           COALESCE(SUM(l.money_from_contract), 0) AS contract
+         FROM warera_battle_rankings r
+         JOIN warera_battles b ON b.battle_id = r.battle_id
+         LEFT JOIN warera_battle_loot l ON l.battle_id = r.battle_id AND l.user_id = r.entity_id
+         WHERE r.entity_type = 'user' AND r.side = 'merged'
+           AND r.entity_id IN (?)
+           ${moneyDateFilter}
+         GROUP BY r.entity_id`,
+        [memberIds],
+      )
+      for (const row of moneyRows) {
+        moneyMap.set(row.user_id, {
+          money: Number(row.money),
+          bounty: Number(row.bounty),
+          contract: Number(row.contract),
+        })
+      }
+    }
+    for (const p of players) {
+      const m = moneyMap.get(p.id)
+      if (m) {
+        p.money = m.money
+        p.moneyBounty = m.bounty
+        p.moneyContract = m.contract
+      }
+    }
+
+    const countryAgg = new Map<string, { name: string; code: string | null; damage: number; money: number }>()
+    for (const p of players) {
+      if (!p.countryId || p.damage <= 0) continue
+      const current = countryAgg.get(p.countryId)
+      countryAgg.set(p.countryId, {
+        name: p.countryName ?? p.countryId,
+        code: current?.code ?? null,
+        damage: (current?.damage ?? 0) + p.damage,
+        money: (current?.money ?? 0) + (p.money ?? 0),
       })
     }
+
+    const totalMoney = players.reduce((sum, p) => sum + (p.money ?? 0), 0)
 
     return {
       muName: mu.name,
       avatarUrl: mu.avatar_url,
       totalDamage: Number(period === 'all' ? mu.total_damage : mu.weekly_damage),
+      totalMoney,
       globalRank: period === 'all' ? mu.global_total_rank : mu.global_weekly_rank,
       memberCount: players.length,
       level: mu.level,
@@ -707,6 +844,7 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
         share: 0,
         rank: null,
         meta: { code: row.code },
+        money: row.money,
       }))),
       byPlayer: players,
       updatedAt: fromMysqlDate(mu.updated_at),

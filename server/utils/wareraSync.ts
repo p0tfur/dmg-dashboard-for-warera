@@ -1,5 +1,7 @@
 import { trpcGet, waitForBudget } from './wareraClient'
 import {
+  getBattlesNeedingMoneyBackfill,
+  markBattleMoneySynced,
   markSyncFailure,
   markSyncSuccess,
   needsBattleDetailsSync,
@@ -8,6 +10,7 @@ import {
   recordCitizenshipSnapshot,
   upsertAlliance,
   upsertBattle,
+  upsertBattleLoot,
   upsertBattleRankings,
   upsertCountries,
   upsertMuMembers,
@@ -15,6 +18,7 @@ import {
   upsertTrackedEntity,
   upsertUsers,
   type AllianceSnapshot,
+  type BattleLootSnapshot,
   type BattleRankingSnapshot,
   type BattleSnapshot,
   type CountrySnapshot,
@@ -325,7 +329,7 @@ async function syncJusticeMembers(muId: string): Promise<{ userIds: string[]; us
   return { userIds: members.map((member) => member.userId), userContext }
 }
 
-async function syncBattleRankings(battleId: string, battleEndedAt: string | null, userContext?: UserContext): Promise<void> {
+async function syncBattleRankings(battleId: string, battleEndedAt: string | null, userContext?: UserContext): Promise<Set<string>> {
   const requests: Array<Promise<BattleRankingSnapshot[]>> = [
     fetchBattleRankings(battleId, 'country', 'merged', battleEndedAt, userContext),
     fetchBattleRankings(battleId, 'country', 'attacker', battleEndedAt, userContext),
@@ -337,8 +341,78 @@ async function syncBattleRankings(battleId: string, battleEndedAt: string | null
     fetchBattleRankings(battleId, 'mu', 'attacker', battleEndedAt, userContext),
     fetchBattleRankings(battleId, 'mu', 'defender', battleEndedAt, userContext),
   ]
+  const results = await Promise.all(requests)
+  const rankings = results.flat()
+  await upsertBattleRankings(rankings)
+  await markBattleMoneySynced(battleId)
+
+  // Collect user entity IDs that appeared in the merged ranking — used by
+  // the caller to drive targeted loot-summary fetches (only for users who
+  // actually fought, not every MU member).
+  const userIds = new Set<string>()
+  for (const r of results[3] ?? []) {
+    if (r.entityType === 'user') userIds.add(r.entityId)
+  }
+  return userIds
+}
+
+/**
+ * Fetches bounty vs contract loot summaries for a set of users in a single
+ * battle. Called during the Justice MU battle scan to populate the
+ * `warera_battle_loot` table used for hover tooltips.
+ */
+async function syncBattleLoot(battleId: string, userIds: string[]): Promise<void> {
+  if (!userIds.length) return
+  const loot: BattleLootSnapshot[] = []
+  const CONCURRENCY = 5
+  for (let i = 0; i < userIds.length; i += CONCURRENCY) {
+    const batch = userIds.slice(i, i + CONCURRENCY)
+    const results = await Promise.all(batch.map(async (userId): Promise<BattleLootSnapshot | null> => {
+      await waitForBudget(10)
+      try {
+        const raw = await trpcGet<any>('battleLootSummary.getByBattleAndUser', {
+          battleId,
+          userId,
+        }, 1)
+        if (!raw) return null
+        const bounty = Number(raw.total_money_from_bounty ?? raw.totalMoneyFromBounty ?? 0)
+        const contract = Number(raw.total_money_from_contract ?? raw.totalMoneyFromContract ?? 0)
+        // Skip users with no earnings at all.
+        if (bounty === 0 && contract === 0) return null
+        return {
+          battleId,
+          userId,
+          moneyFromBounty: bounty,
+          moneyFromContract: contract,
+          totalDmg: Number(raw.total_dmg ?? raw.totalDmg ?? 0),
+          hits: Number(raw.hits ?? 0),
+          raw,
+        }
+      } catch {
+        return null
+      }
+    }))
+    for (const r of results) {
+      if (r) loot.push(r)
+    }
+  }
+  if (loot.length) await upsertBattleLoot(loot)
+}
+
+/**
+ * Backfills money rankings for a single battle that was synced before the
+ * money stream existed. Only fetches the 3 merged variants (country/user/mu)
+ * to keep the API budget low — 6 calls per battle instead of 18.
+ */
+async function backfillBattleMoney(battleId: string): Promise<void> {
+  const requests = [
+    fetchBattleRankings(battleId, 'country', 'merged'),
+    fetchBattleRankings(battleId, 'user', 'merged'),
+    fetchBattleRankings(battleId, 'mu', 'merged'),
+  ]
   const rankings = (await Promise.all(requests)).flat()
   await upsertBattleRankings(rankings)
+  await markBattleMoneySynced(battleId)
 }
 
 async function fetchBattleRankings(
@@ -349,21 +423,38 @@ async function fetchBattleRankings(
   userContext?: UserContext,
 ): Promise<BattleRankingSnapshot[]> {
   await waitForBudget(15)
-  const raw = await trpcGet<any>('battleRanking.getRanking', {
-    battleId,
-    dataType: 'damage',
-    type: entityType,
-    side,
-    limit: 100,
-  }, 1)
-  return asArray<any>(raw).map((item) => {
+  // Fetch damage and money rankings in parallel — same entity set, different metric.
+  const [damageRaw, moneyRaw] = await Promise.all([
+    trpcGet<any>('battleRanking.getRanking', {
+      battleId,
+      dataType: 'damage',
+      type: entityType,
+      side,
+      limit: 100,
+    }, 1),
+    trpcGet<any>('battleRanking.getRanking', {
+      battleId,
+      dataType: 'money',
+      type: entityType,
+      side,
+      limit: 100,
+    }, 1),
+  ])
+
+  // Build entityId → money lookup from the money ranking response.
+  const moneyByEntity = new Map<string, number>()
+  for (const item of asArray<any>(moneyRaw)) {
+    const eid = item?.[entityType] ?? item?.entityId
+    if (eid) moneyByEntity.set(eid, Number(item?.value ?? 0))
+  }
+
+  // Build snapshots: iterate damage items, attach money from the lookup.
+  const snapshots: BattleRankingSnapshot[] = []
+  for (const item of asArray<any>(damageRaw)) {
     const entityId = item?.[entityType] ?? item?.entityId
-    if (!entityId) return null
+    if (!entityId) continue
 
     // Compute attribution for user-type entries only.
-    // The API never returns a country field on user rankings, so we derive
-    // attributedCountryId and attributionConfidence from the citizenship
-    // context collected during syncJusticeMembers.
     let attributedCountryId: string | null = null
     let attributionConfidence: 'certain' | 'probable' | 'unknown' = 'unknown'
 
@@ -374,29 +465,19 @@ async function fetchBattleRankings(
         const changeTs = context.lastChangeAt ? Date.parse(context.lastChangeAt) : NaN
         if (Number.isFinite(refTs) && Number.isFinite(changeTs)) {
           if (refTs >= changeTs) {
-            // Battle ended after the last citizenship change → assume current country.
             attributedCountryId = context.currentCountry
             attributionConfidence = 'certain'
           } else {
-            // Battle ended before the last citizenship change → the user was
-            // likely a citizen of a different country (the previous one in
-            // the citizenship history, if known). We set 'unknown' here;
-            // a future enrichment pass may promote to 'probable'.
-            //
-            // NOTE: We do NOT try to look up the previous country yet because
-            // at this point we may not have recorded it. The citizenship
-            // history table is append-only and snapshots accumulate over time.
             attributionConfidence = 'unknown'
           }
         } else {
-          // We have a current country but no reliable timestamps.
           attributedCountryId = context.currentCountry
           attributionConfidence = 'unknown'
         }
       }
     }
 
-    return {
+    snapshots.push({
       battleId,
       entityType,
       entityId,
@@ -404,10 +485,12 @@ async function fetchBattleRankings(
       attributionConfidence,
       side,
       damage: Number(item?.value ?? 0),
+      money: moneyByEntity.get(entityId) ?? 0,
       rank: item?.rank ?? null,
       raw: item,
-    }
-  }).filter((item): item is BattleRankingSnapshot => Boolean(item))
+    })
+  }
+  return snapshots
 }
 
 async function scanFederationBattles(memberCountryIds: string[], userContext: UserContext): Promise<void> {
@@ -460,6 +543,29 @@ async function syncBattleDetails(battleId: string): Promise<void> {
   await upsertBattle(battle)
 }
 
+/** Backfill cap per sync cycle (each battle = 6 API calls for merged money). */
+const MONEY_BACKFILL_BATCH = 10
+
+/**
+ * Picks the oldest battles without money data and enriches them. Runs once
+ * per sync cycle (every 2 min) and processes at most MONEY_BACKFILL_BATCH
+ * battles. Over time this naturally backfills the entire history.
+ */
+async function backfillMoneyRankings(): Promise<void> {
+  const battleIds = await getBattlesNeedingMoneyBackfill(MONEY_BACKFILL_BATCH)
+  if (!battleIds.length) return
+  console.log(`[warera] money backfill: enriching ${battleIds.length} battles`)
+  for (const battleId of battleIds) {
+    try {
+      await backfillBattleMoney(battleId)
+    } catch (err) {
+      // Don't abort the whole batch — just log and continue.
+      console.warn(`[warera] money backfill failed for ${battleId}:`, (err as Error)?.message ?? err)
+    }
+  }
+  await markSyncSuccess('money-backfill')
+}
+
 export function ensureWareraDbSyncStarted(): void {
   if (!isWareraDbEnabled() || started) return
   started = true
@@ -499,6 +605,11 @@ export async function runWareraDbSyncOnce(): Promise<void> {
     // we fetch Justice MU battles once and sync rankings, passing userContext
     // so attribution confidence is computed on the fly.
     await syncJusticeMuBattles(justiceMuId, userContext)
+
+    // Gradual backfill: enrich old battles that were synced before the money
+    // stream existed. Processes a small batch each cycle to avoid exhausting
+    // the API budget. New battles are handled inline by syncBattleRankings.
+    await backfillMoneyRankings()
   } catch (err) {
     await markSyncFailure('main', err)
   } finally {
@@ -545,7 +656,12 @@ async function syncJusticeMuBattles(muId: string, userContext: UserContext): Pro
         await syncBattleDetails(battle.id)
       }
       // Pass userContext so attribution confidence is populated for known users.
-      await syncBattleRankings(battle.id, battle.endedAt, userContext)
+      const battleUserIds = await syncBattleRankings(battle.id, battle.endedAt, userContext)
+      // Fetch bounty/contract loot only for Justice members who fought here.
+      const justiceParticipants = [...battleUserIds].filter((uid) => userContext.has(uid))
+      if (justiceParticipants.length) {
+        await syncBattleLoot(battle.id, justiceParticipants)
+      }
     }
     if (hitCutoff) break
     cursor = raw?.nextCursor ?? undefined

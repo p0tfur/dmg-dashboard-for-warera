@@ -123,6 +123,12 @@ export interface DamageRow {
   share: number // 0..1 share of total
   rank?: number | null
   meta?: Record<string, string | number | null>
+  /** Total money earned (bounty + contracts) from tracked battles. */
+  money?: number | null
+  /** Bounty portion of `money` (when available, e.g. Justice players). */
+  moneyBounty?: number | null
+  /** Mercenary-contract portion of `money` (when available). */
+  moneyContract?: number | null
 }
 
 export interface PlayerRow {
@@ -134,6 +140,12 @@ export interface PlayerRow {
   damage: number
   help?: number | null
   rank?: number | null
+  /** Total money earned (bounty + contracts) from tracked battles. */
+  money?: number | null
+  /** Bounty portion of `money`. */
+  moneyBounty?: number | null
+  /** Mercenary-contract portion of `money`. */
+  moneyContract?: number | null
 }
 
 export interface DailyDamagePoint {
@@ -146,6 +158,8 @@ export interface FederationResponse {
   allianceName: string
   avatarUrl?: string | null
   totalDamage: number
+  /** Total money earned across all tracked battles (alliance-wide). */
+  totalMoney?: number | null
   globalRank?: number | null
   memberCountryCount: number
   muCount: number
@@ -228,6 +242,8 @@ export interface JusticeResponse {
   muName: string
   avatarUrl?: string | null
   totalDamage: number
+  /** Total money earned across all tracked battles (MU-wide). */
+  totalMoney?: number | null
   globalRank?: number | null
   memberCount: number
   level?: number | null

@@ -9,9 +9,10 @@ const props = withDefaults(
     loading?: boolean
     limit?: number
     showHelp?: boolean
+    showMoney?: boolean
     selectedId?: string | null
   }>(),
-  { loading: false, limit: 50, showHelp: true, selectedId: null },
+  { loading: false, limit: 50, showHelp: true, showMoney: false, selectedId: null },
 )
 const emit = defineEmits<{
   select: [row: PlayerRow]
@@ -25,8 +26,25 @@ const sorted = computed(() => {
   return arr.slice(0, props.limit)
 })
 
-const colSpan = computed(() => (props.showHelp ? 6 : 5))
+const colSpan = computed(() => {
+  let cols = 5
+  if (props.showMoney) cols += 1
+  if (props.showHelp) cols += 1
+  return cols
+})
 const hasExpandedSlot = computed(() => Boolean(slots.expanded))
+
+/** Build hover tooltip showing bounty vs contract breakdown when available. */
+function moneyTooltip(r: PlayerRow): string {
+  const total = r.money
+  if (total == null || total === 0) return ''
+  const parts = [`Total: ${formatFull(total)}`]
+  if (r.moneyBounty != null || r.moneyContract != null) {
+    parts.push(`Bounty: ${formatFull(r.moneyBounty ?? 0)}`)
+    parts.push(`Contracts: ${formatFull(r.moneyContract ?? 0)}`)
+  }
+  return parts.join('\n')
+}
 
 function selectRow(row: PlayerRow) {
   emit('select', row)
@@ -48,6 +66,9 @@ function selectRow(row: PlayerRow) {
           >
             DMG <span class="opacity-50">↕</span>
           </th>
+          <th v-if="showMoney" class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80">
+            MONEY
+          </th>
           <th v-if="showHelp" class="py-2 pl-2 w-16 text-right font-semibold">Help</th>
         </tr>
       </thead>
@@ -59,6 +80,7 @@ function selectRow(row: PlayerRow) {
             <td class="py-2.5"><div class="skel h-4 rounded-sm" :style="{ width: 35 + i * 7 + '%' }" /></td>
             <td class="py-2.5"><div class="skel h-4 w-16 rounded-sm" /></td>
             <td class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
+            <td v-if="showMoney" class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
             <td v-if="showHelp" class="py-2.5"><div class="skel h-4 w-8 ml-auto rounded-sm" /></td>
           </tr>
         </template>
@@ -112,6 +134,13 @@ function selectRow(row: PlayerRow) {
                 :title="formatFull(r.damage)"
               >
                 {{ formatDamage(r.damage) }}
+              </td>
+              <td
+                v-if="showMoney"
+                class="py-2.5 px-2 text-right data-mono font-semibold text-amber-400/90"
+                :title="moneyTooltip(r)"
+              >
+                {{ r.money != null && r.money > 0 ? formatDamage(r.money) : '—' }}
               </td>
               <td v-if="showHelp" class="py-2.5 pl-2 text-right data-mono text-xs text-zinc-500">
                 {{ r.help ?? '—' }}

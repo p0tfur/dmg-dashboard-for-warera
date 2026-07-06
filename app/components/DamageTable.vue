@@ -1,4 +1,4 @@
-<script setup lang="ts" generic="T extends { id: string; name: string; damage: number; share: number; rank?: number | null; meta?: Record<string, string | number | null> | null }">
+<script setup lang="ts" generic="T extends { id: string; name: string; damage: number; share: number; rank?: number | null; meta?: Record<string, string | number | null> | null; money?: number | null; moneyBounty?: number | null; moneyContract?: number | null }">
 import { computed, ref, useSlots } from 'vue'
 import { ChevronDown } from 'lucide-vue-next'
 import { formatDamage, formatFull, flagEmoji } from '~/utils/format'
@@ -13,13 +13,14 @@ const props = withDefaults(
     limit?: number
     collapsedLimit?: number
     selectedId?: string | null
+    showMoney?: boolean
     secondary?: {
       key: string
       label: string
       accent?: 'danger' | 'fed' | 'just'
     }
   }>(),
-  { accent: 'fed', showFlag: false, loading: false, limit: 50, collapsedLimit: 50, selectedId: null },
+  { accent: 'fed', showFlag: false, loading: false, limit: 50, collapsedLimit: 50, selectedId: null, showMoney: false },
 )
 
 const emit = defineEmits<{
@@ -52,9 +53,22 @@ const hasExpandedSlot = computed(() => Boolean(slots.expanded))
 const colSpan = computed(() => {
   let cols = 4
   if (props.showFlag || props.avatarKey) cols += 1
+  if (props.showMoney) cols += 1
   if (props.secondary) cols += 1
   return cols
 })
+
+/** Build hover tooltip showing bounty vs contract breakdown when available. */
+function moneyTooltip(r: T): string {
+  const total = r.money
+  if (total == null || total === 0) return ''
+  const parts = [`Total: ${formatFull(total)}`]
+  if (r.moneyBounty != null || r.moneyContract != null) {
+    parts.push(`Bounty: ${formatFull(r.moneyBounty ?? 0)}`)
+    parts.push(`Contracts: ${formatFull(r.moneyContract ?? 0)}`)
+  }
+  return parts.join('\n')
+}
 
 const secondaryAccentText = computed(() => {
   const a = props.secondary?.accent ?? 'danger'
@@ -89,6 +103,9 @@ function selectRow(row: T) {
           >
             DMG <span class="opacity-50">↕</span>
           </th>
+          <th v-if="showMoney" class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80">
+            MONEY
+          </th>
           <th v-if="secondary" class="py-2 px-2 w-24 text-right font-semibold">
             {{ secondary.label }}
           </th>
@@ -102,6 +119,7 @@ function selectRow(row: T) {
             <td v-if="showFlag || avatarKey" class="py-2.5"><div class="skel h-6 w-6 rounded-full" /></td>
             <td class="py-2.5"><div class="skel h-4 rounded-sm" :style="{ width: 40 + i * 8 + '%' }" /></td>
             <td class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
+            <td v-if="showMoney" class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
             <td v-if="secondary" class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
             <td class="py-2.5"><div class="skel h-4 w-10 ml-auto rounded-sm" /></td>
           </tr>
@@ -162,6 +180,14 @@ function selectRow(row: T) {
                 :title="formatFull(r.damage)"
               >
                 {{ formatDamage(r.damage) }}
+              </td>
+
+              <td
+                v-if="showMoney"
+                class="py-2.5 px-2 text-right data-mono font-semibold text-amber-400/90"
+                :title="moneyTooltip(r)"
+              >
+                {{ r.money != null && r.money > 0 ? formatDamage(r.money) : '—' }}
               </td>
 
               <td
