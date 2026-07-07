@@ -5,6 +5,7 @@ import {
   markSyncFailure,
   markSyncSuccess,
   needsBattleDetailsSync,
+  needsBattleMoneySync,
   needsUserProfileEnrichment,
   recordAllianceMembershipSnapshot,
   recordCitizenshipSnapshot,
@@ -403,8 +404,9 @@ async function syncBattleLoot(battleId: string, userIds: string[]): Promise<void
  * Backfills money rankings for a single battle that was synced before the
  * money stream existed. Only fetches the 3 merged variants (country/user/mu)
  * to keep the API budget low — 6 calls per battle instead of 18.
+ * Also fetches loot for Justice members who fought in this battle.
  */
-async function backfillBattleMoney(battleId: string): Promise<void> {
+async function backfillBattleMoney(battleId: string, userContext?: UserContext): Promise<void> {
   const requests = [
     fetchBattleRankings(battleId, 'country', 'merged'),
     fetchBattleRankings(battleId, 'user', 'merged'),
@@ -413,6 +415,19 @@ async function backfillBattleMoney(battleId: string): Promise<void> {
   const rankings = (await Promise.all(requests)).flat()
   await upsertBattleRankings(rankings)
   await markBattleMoneySynced(battleId)
+
+  // Loot (bounty/contract) is only relevant for Justice members.
+  if (userContext) {
+    const userIds = new Set<string>()
+    for (const r of rankings) {
+      if (r.entityType === 'user' && userContext.has(r.entityId)) {
+        userIds.add(r.entityId)
+      }
+    }
+    if (userIds.size) {
+      await syncBattleLoot(battleId, [...userIds])
+    }
+  }
 }
 
 async function fetchBattleRankings(
@@ -494,10 +509,10 @@ async function fetchBattleRankings(
 }
 
 async function scanFederationBattles(memberCountryIds: string[], userContext: UserContext): Promise<void> {
-  // No battle-ID checkpoint — we rely on needsBattleDetailsSync to skip
-  // already-synced battles. The 15-page limit per country controls the
-  // API budget per cycle; over time this naturally digs deeper into history.
-
+  // Finished battles have immutable rankings — once synced (money_synced_at
+  // is set), we skip them entirely. The battle list is `direction: 'backward'`
+  // (newest first), so once an entire page is already synced we stop
+  // paginating: everything older is already in the DB.
   for (let i = 0; i < memberCountryIds.length; i += FED_COUNTRY_CONCURRENCY) {
     const batch = memberCountryIds.slice(i, i + FED_COUNTRY_CONCURRENCY)
     await Promise.all(batch.map(async (countryId) => {
@@ -515,15 +530,28 @@ async function scanFederationBattles(memberCountryIds: string[], userContext: Us
         const items = asArray<BattleListItem>(raw?.items ? raw : raw)
         if (!items.length) break
 
+        let processedAny = false
         for (const item of items) {
           const battle = mapBattle(item)
           if (!battle) continue
+          // Skip battles whose rankings are already synced.
+          if (!(await needsBattleMoneySync(battle.id))) continue
+          processedAny = true
           if (await needsBattleDetailsSync(battle.id)) {
             await upsertBattle(battle)
             await syncBattleDetails(battle.id)
           }
-          await syncBattleRankings(battle.id, battle.endedAt, userContext)
+          const battleUserIds = await syncBattleRankings(battle.id, battle.endedAt, userContext)
+          // Fetch bounty/contract loot for Justice members who fought in this
+          // Federation battle — same pattern as syncJusticeMuBattles.
+          const justiceParticipants = [...battleUserIds].filter((uid) => userContext.has(uid))
+          if (justiceParticipants.length) {
+            await syncBattleLoot(battle.id, justiceParticipants)
+          }
         }
+
+        // Whole page already synced — nothing older can be new.
+        if (!processedAny) break
 
         cursor = raw?.nextCursor ?? undefined
         if (!cursor) break
@@ -551,13 +579,13 @@ const MONEY_BACKFILL_BATCH = 10
  * per sync cycle (every 2 min) and processes at most MONEY_BACKFILL_BATCH
  * battles. Over time this naturally backfills the entire history.
  */
-async function backfillMoneyRankings(): Promise<void> {
+async function backfillMoneyRankings(userContext?: UserContext): Promise<void> {
   const battleIds = await getBattlesNeedingMoneyBackfill(MONEY_BACKFILL_BATCH)
   if (!battleIds.length) return
   console.log(`[warera] money backfill: enriching ${battleIds.length} battles`)
   for (const battleId of battleIds) {
     try {
-      await backfillBattleMoney(battleId)
+      await backfillBattleMoney(battleId, userContext)
     } catch (err) {
       // Don't abort the whole batch — just log and continue.
       console.warn(`[warera] money backfill failed for ${battleId}:`, (err as Error)?.message ?? err)
@@ -609,7 +637,7 @@ export async function runWareraDbSyncOnce(): Promise<void> {
     // Gradual backfill: enrich old battles that were synced before the money
     // stream existed. Processes a small batch each cycle to avoid exhausting
     // the API budget. New battles are handled inline by syncBattleRankings.
-    await backfillMoneyRankings()
+    await backfillMoneyRankings(userContext)
   } catch (err) {
     await markSyncFailure('main', err)
   } finally {
@@ -642,6 +670,7 @@ async function syncJusticeMuBattles(muId: string, userContext: UserContext): Pro
     if (!items.length) break
 
     let hitCutoff = false
+    let processedAny = false
     for (const item of items) {
       const refIso = item.endedAt ?? item.createdAt ?? null
       const refTs = refIso ? Date.parse(refIso) : NaN
@@ -651,6 +680,9 @@ async function syncJusticeMuBattles(muId: string, userContext: UserContext): Pro
       }
       const battle = mapBattle(item)
       if (!battle) continue
+      // Skip battles whose rankings are already synced (finished = immutable).
+      if (!(await needsBattleMoneySync(battle.id))) continue
+      processedAny = true
       await upsertBattle(battle)
       if (await needsBattleDetailsSync(battle.id)) {
         await syncBattleDetails(battle.id)
@@ -664,6 +696,8 @@ async function syncJusticeMuBattles(muId: string, userContext: UserContext): Pro
       }
     }
     if (hitCutoff) break
+    // Whole page already synced — nothing older can be new.
+    if (!processedAny) break
     cursor = raw?.nextCursor ?? undefined
     if (!cursor) break
     guard++
