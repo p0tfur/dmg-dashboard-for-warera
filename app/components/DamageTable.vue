@@ -67,7 +67,16 @@ function moneyTooltip(r: T): string {
     parts.push(`Bounty: ${formatFull(r.moneyBounty ?? 0)}`)
     parts.push(`Contracts: ${formatFull(r.moneyContract ?? 0)}`)
   }
+  if (r.damage > 0) {
+    parts.push(`Per 1k dmg: ${formatPerK(total / r.damage * 1000)}`)
+  }
   return parts.join('\n')
+}
+
+/** Formats money-per-1k-dmg ratio, keeping decimals for small values. */
+function formatPerK(n: number): string {
+  if (n >= 100) return Math.round(n).toLocaleString('en-US')
+  return n.toFixed(2)
 }
 
 const secondaryAccentText = computed(() => {
