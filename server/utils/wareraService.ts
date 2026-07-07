@@ -985,8 +985,18 @@ export async function getJusticeData(period: Period): Promise<JusticeResponse> {
     }
     finalizeRows(byCountry)
 
-    const totalDamage = period === 'all' ? mu.total : mu.weekly
-    const globalRank = period === 'all' ? mu.globalTotalRank : mu.globalWeeklyRank
+    // The upstream MU ranking only exposes weekly + total (no monthly bucket),
+    // so for "month" the period total is derived by summing the (already
+    // correctly bucketed) per-player monthly damage. Global rank similarly has
+    // no monthly variant, so it is hidden for the month view.
+    const totalDamage =
+      period === 'all'
+        ? mu.total
+        : period === 'month'
+          ? players.reduce((s, p) => s + p.damage, 0)
+          : mu.weekly
+    const globalRank =
+      period === 'all' ? mu.globalTotalRank : period === 'month' ? null : mu.globalWeeklyRank
 
     return {
       muName: mu.name,

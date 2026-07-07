@@ -834,9 +834,17 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
     return {
       muName: mu.name,
       avatarUrl: mu.avatar_url,
-      totalDamage: Number(period === 'all' ? mu.total_damage : mu.weekly_damage),
+      // Upstream MU rankings only expose weekly + total (no monthly bucket);
+      // for "month" sum the per-player monthly damage (already selected above).
+      totalDamage: Number(
+        period === 'all'
+          ? mu.total_damage
+          : period === 'month'
+            ? players.reduce((s, p) => s + p.damage, 0)
+            : mu.weekly_damage,
+      ),
       totalMoney,
-      globalRank: period === 'all' ? mu.global_total_rank : mu.global_weekly_rank,
+      globalRank: period === 'all' ? mu.global_total_rank : period === 'month' ? null : mu.global_weekly_rank,
       memberCount: players.length,
       level: mu.level,
       byCountry: finalizeDamageRows([...countryAgg.entries()].map(([id, row]) => ({
