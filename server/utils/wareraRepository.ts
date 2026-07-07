@@ -487,6 +487,49 @@ export async function getBattlesNeedingMoneyBackfill(limit: number): Promise<str
   return result ?? []
 }
 
+/**
+ * Finds battles that have money rankings synced but are missing loot entries
+ * for at least one user with money > 0. Used to backfill the loot table for
+ * battles processed before syncBattleLoot was added.
+ */
+export async function getBattlesNeedingLootBackfill(limit: number): Promise<string[]> {
+  const result = await withWareraDb('getBattlesNeedingLootBackfill', async (db) => {
+    const [rows] = await db.query<DbRow<{ battle_id: string }>[]>(
+      `SELECT DISTINCT r.battle_id
+       FROM warera_battle_rankings r
+       JOIN warera_battles b ON b.battle_id = r.battle_id
+       WHERE r.entity_type = 'user' AND r.side = 'merged' AND r.money > 0
+         AND b.money_synced_at IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM warera_battle_loot l
+           WHERE l.battle_id = r.battle_id AND l.user_id = r.entity_id
+         )
+       ORDER BY COALESCE(b.ended_at, b.created_at) DESC
+       LIMIT ?`, [limit])
+    return rows.map((r) => r.battle_id)
+  })
+  return result ?? []
+}
+
+/**
+ * Returns user IDs that fought in a battle (have a user ranking row) but
+ * don't yet have a loot entry. Used by the loot backfill pass.
+ */
+export async function getBattleUserIdsNeedingLoot(battleId: string): Promise<string[]> {
+  const result = await withWareraDb('getBattleUserIdsNeedingLoot', async (db) => {
+    const [rows] = await db.query<DbRow<{ user_id: string }>[]>(
+      `SELECT r.entity_id AS user_id
+       FROM warera_battle_rankings r
+       WHERE r.battle_id = ? AND r.entity_type = 'user' AND r.side = 'merged'
+         AND NOT EXISTS (
+           SELECT 1 FROM warera_battle_loot l
+           WHERE l.battle_id = r.battle_id AND l.user_id = r.entity_id
+         )`, [battleId])
+    return rows.map((r) => r.user_id)
+  })
+  return result ?? []
+}
+
 export async function markSyncSuccess(jobName: string, checkpoint?: string | null): Promise<void> {
   await withWareraDb('markSyncSuccess', async (db) => {
     await db.execute(

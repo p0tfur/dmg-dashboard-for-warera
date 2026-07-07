@@ -1,6 +1,8 @@
 import { trpcGet, waitForBudget } from './wareraClient'
 import {
   getBattlesNeedingMoneyBackfill,
+  getBattlesNeedingLootBackfill,
+  getBattleUserIdsNeedingLoot,
   markBattleMoneySynced,
   markSyncFailure,
   markSyncSuccess,
@@ -594,6 +596,33 @@ async function backfillMoneyRankings(userContext?: UserContext): Promise<void> {
   await markSyncSuccess('money-backfill')
 }
 
+/** Backfill cap per sync cycle for loot (each battle = N user calls, throttled). */
+const LOOT_BACKFILL_BATCH = 10
+
+/**
+ * Backfills bounty/contract loot for Justice members in battles that already
+ * have money rankings but were processed before syncBattleLoot existed.
+ * Pulls user IDs from battle_rankings (no extra ranking API calls) and
+ * filters to Justice members via userContext.
+ */
+async function backfillLootRankings(userContext: UserContext): Promise<void> {
+  const battleIds = await getBattlesNeedingLootBackfill(LOOT_BACKFILL_BATCH)
+  if (!battleIds.length) return
+  console.log(`[warera] loot backfill: enriching ${battleIds.length} battles`)
+  for (const battleId of battleIds) {
+    try {
+      const userIds = await getBattleUserIdsNeedingLoot(battleId)
+      const justiceParticipants = userIds.filter((uid) => userContext.has(uid))
+      if (justiceParticipants.length) {
+        await syncBattleLoot(battleId, justiceParticipants)
+      }
+    } catch (err) {
+      console.warn(`[warera] loot backfill failed for ${battleId}:`, (err as Error)?.message ?? err)
+    }
+  }
+  await markSyncSuccess('loot-backfill')
+}
+
 export function ensureWareraDbSyncStarted(): void {
   if (!isWareraDbEnabled() || started) return
   started = true
@@ -638,6 +667,9 @@ export async function runWareraDbSyncOnce(): Promise<void> {
     // stream existed. Processes a small batch each cycle to avoid exhausting
     // the API budget. New battles are handled inline by syncBattleRankings.
     await backfillMoneyRankings(userContext)
+    // Backfill loot (bounty/contract) for Justice members in old battles that
+    // already have money rankings but no loot entries yet.
+    await backfillLootRankings(userContext)
   } catch (err) {
     await markSyncFailure('main', err)
   } finally {
