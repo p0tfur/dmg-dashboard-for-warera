@@ -43,6 +43,9 @@ function moneyTooltip(r: PlayerRow): string {
     parts.push(`Bounty: ${formatFull(r.moneyBounty ?? 0)}`)
     parts.push(`Contracts: ${formatFull(r.moneyContract ?? 0)}`)
   }
+  if (r.damage > 0) {
+    parts.push(`Per 1k dmg: ${formatFull(Math.round(total / r.damage * 1000))}`)
+  }
   return parts.join('\n')
 }
 

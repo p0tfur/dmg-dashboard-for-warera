@@ -475,8 +475,10 @@ export async function needsBattleMoneySync(battleId: string): Promise<boolean> {
 /** Returns up to `limit` battle IDs that need money backfill (oldest first). */
 export async function getBattlesNeedingMoneyBackfill(limit: number): Promise<string[]> {
   const result = await withWareraDb('getBattlesNeedingMoneyBackfill', async (db) => {
-    const [rows] = await db.execute<DbRow<{ battle_id: string }>[]>(`
-      SELECT battle_id FROM warera_battles
+    // Use query() instead of execute() — MySQL prepared statements don't
+    // support LIMIT placeholders, and we need this to work reliably.
+    const [rows] = await db.query<DbRow<{ battle_id: string }>[]>(
+      `SELECT battle_id FROM warera_battles
       WHERE money_synced_at IS NULL
       ORDER BY COALESCE(ended_at, created_at) ASC
       LIMIT ?`, [limit])
