@@ -818,14 +818,18 @@ export async function getDbJustice(muId: string, period: Period): Promise<{
 
     // Supplementary money query: aggregate money + bounty/contract from
     // battle rankings and loot tables for this MU's members.
-    // Date filter mirrors the damage period (week = last 7 days, month = 30, all = no filter).
+    // Date filter must match the game's calendar boundaries (not rolling),
+    // otherwise money spans a different window than damage and the ratio breaks.
+    //   month → 1st of the current month (game resets monthly_damage here)
+    //   week  → keep rolling 7-day window (matches existing behavior)
+    //   all   → no filter
     const memberIds = players.map((p) => p.id)
     const moneyMap = new Map<string, { money: number; bounty: number; contract: number }>()
     if (memberIds.length) {
       const moneyDateFilter = period === 'week'
         ? "AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 7 DAY"
         : period === 'month'
-          ? "AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 30 DAY"
+          ? "AND COALESCE(b.ended_at, b.created_at) >= DATE_FORMAT(NOW(), '%Y-%m-01')"
           : ''
       const [moneyRows] = await db.query<DbRow<{
         user_id: string
