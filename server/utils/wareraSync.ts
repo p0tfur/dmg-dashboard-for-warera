@@ -364,7 +364,14 @@ async function syncBattleRankings(battleId: string, battleEndedAt: string | null
  * battle. Called during the Justice MU battle scan to populate the
  * `warera_battle_loot` table used for hover tooltips.
  */
-async function syncBattleLoot(battleId: string, userIds: string[]): Promise<void> {
+/**
+ * Fetches bounty/contract loot for the given users and upserts into
+ * warera_battle_loot. When `insertZeros` is true (backfill mode), users
+ * whose loot API returns 0/0 still get a row — this prevents the backfill
+ * query from re-selecting them forever. When false (inline mode), 0/0
+ * users are skipped to avoid polluting the loot table.
+ */
+async function syncBattleLoot(battleId: string, userIds: string[], insertZeros = false): Promise<void> {
   if (!userIds.length) return
   const loot: BattleLootSnapshot[] = []
   const CONCURRENCY = 5
@@ -380,8 +387,9 @@ async function syncBattleLoot(battleId: string, userIds: string[]): Promise<void
         if (!raw) return null
         const bounty = Number(raw.total_money_from_bounty ?? raw.totalMoneyFromBounty ?? 0)
         const contract = Number(raw.total_money_from_contract ?? raw.totalMoneyFromContract ?? 0)
-        // Skip users with no earnings at all.
-        if (bounty === 0 && contract === 0) return null
+        // Skip users with no earnings at all — unless we're in backfill mode,
+        // where we insert a zero-row so this battle isn't re-queued forever.
+        if (bounty === 0 && contract === 0 && !insertZeros) return null
         return {
           battleId,
           userId,
@@ -604,9 +612,14 @@ const LOOT_BACKFILL_BATCH = 10
  * have money rankings but were processed before syncBattleLoot existed.
  * Pulls user IDs from battle_rankings (no extra ranking API calls) and
  * filters to Justice members via userContext.
+ *
+ * Passes the Justice user ID list to the repository query so that only
+ * battles with Justice members missing loot are picked — otherwise battles
+ * with only non-Justice users (who never get loot entries) loop forever.
  */
 async function backfillLootRankings(userContext: UserContext): Promise<void> {
-  const battleIds = await getBattlesNeedingLootBackfill(LOOT_BACKFILL_BATCH)
+  const justiceUserIds = [...userContext.keys()]
+  const battleIds = await getBattlesNeedingLootBackfill(LOOT_BACKFILL_BATCH, justiceUserIds)
   if (!battleIds.length) return
   console.log(`[warera] loot backfill: enriching ${battleIds.length} battles`)
   for (const battleId of battleIds) {
@@ -614,7 +627,7 @@ async function backfillLootRankings(userContext: UserContext): Promise<void> {
       const userIds = await getBattleUserIdsNeedingLoot(battleId)
       const justiceParticipants = userIds.filter((uid) => userContext.has(uid))
       if (justiceParticipants.length) {
-        await syncBattleLoot(battleId, justiceParticipants)
+        await syncBattleLoot(battleId, justiceParticipants, true)
       }
     } catch (err) {
       console.warn(`[warera] loot backfill failed for ${battleId}:`, (err as Error)?.message ?? err)

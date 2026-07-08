@@ -232,8 +232,9 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 <Trophy class="h-3 w-3 text-fed" /> #{{ fed.globalRank }} global
               </span>
             </div>
-            <p class="text-xs text-zinc-500 mt-0.5">
-              Damage {{ PERIOD_LABEL[fedPeriod] }}
+            <p class="text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+              Damage
+              <span class="chip border-fed/30 bg-fed/10 text-fed-glow">{{ PERIOD_LABEL[fedPeriod] }}</span>
               <span v-if="formatPeriodRange(fed?.periodRange)" class="data-mono text-zinc-600">· {{ formatPeriodRange(fed?.periodRange) }}</span>
               ·
               <span class="data-mono">{{ fed ? formatFull(fed.totalDamage) : '…' }}</span> total
@@ -242,6 +243,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
                 title="Sum of all member country damage since each country joined The Federation. Based on our own tracked battle history, not the game's lifetime stats.">
                 ?
               </span>
+              <span v-if="period === 'month'" class="text-[10px] text-amber-500/70">· Month view applies only to Justice</span>
             </p>
           </div>
         </div>
@@ -276,7 +278,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="fed?.byCountry ?? []" :loading="fedLoading" accent="fed" show-flag show-money />
+              <DamageTable :rows="fed?.byCountry ?? []" :loading="fedLoading" accent="fed" show-flag show-money show-per-k />
             </div>
 
             <!-- Membership legend -->
@@ -309,7 +311,7 @@ useHead({ title: 'WarEra DMG — The Federation & Justice' })
               <span class="text-[10px] uppercase tracking-wider text-zinc-600">{{ PERIOD_LABEL[fedPeriod] }}</span>
             </div>
             <div class="px-2 py-1">
-              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" :collapsed-limit="15" show-money />
+              <DamageTable :rows="fed?.byMu ?? []" :loading="fedLoading" accent="fed" :collapsed-limit="15" show-money show-per-k />
             </div>
           </div>
         </div>

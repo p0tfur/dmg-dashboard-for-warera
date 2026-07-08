@@ -14,13 +14,14 @@ const props = withDefaults(
     collapsedLimit?: number
     selectedId?: string | null
     showMoney?: boolean
+    showPerK?: boolean
     secondary?: {
       key: string
       label: string
       accent?: 'danger' | 'fed' | 'just'
     }
   }>(),
-  { accent: 'fed', showFlag: false, loading: false, limit: 50, collapsedLimit: 50, selectedId: null, showMoney: false },
+  { accent: 'fed', showFlag: false, loading: false, limit: 50, collapsedLimit: 50, selectedId: null, showMoney: false, showPerK: false },
 )
 
 const emit = defineEmits<{
@@ -54,9 +55,16 @@ const colSpan = computed(() => {
   let cols = 4
   if (props.showFlag || props.avatarKey) cols += 1
   if (props.showMoney) cols += 1
+  if (props.showPerK) cols += 1
   if (props.secondary) cols += 1
   return cols
 })
+
+/** Earnings per 1k damage, or null when not computable. */
+function perKValue(r: T): number | null {
+  if (r.money == null || r.money === 0 || r.damage <= 0) return null
+  return (r.money / r.damage) * 1000
+}
 
 /** Build hover tooltip showing bounty vs contract breakdown when available. */
 function moneyTooltip(r: T): string {
@@ -115,6 +123,9 @@ function selectRow(row: T) {
           <th v-if="showMoney" class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80">
             MONEY
           </th>
+          <th v-if="showPerK" class="py-2 px-2 w-20 text-right font-semibold text-amber-400/80">
+            PER 1K
+          </th>
           <th v-if="secondary" class="py-2 px-2 w-24 text-right font-semibold">
             {{ secondary.label }}
           </th>
@@ -129,6 +140,7 @@ function selectRow(row: T) {
             <td class="py-2.5"><div class="skel h-4 rounded-sm" :style="{ width: 40 + i * 8 + '%' }" /></td>
             <td class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
             <td v-if="showMoney" class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
+            <td v-if="showPerK" class="py-2.5"><div class="skel h-4 w-12 ml-auto rounded-sm" /></td>
             <td v-if="secondary" class="py-2.5"><div class="skel h-4 w-16 ml-auto rounded-sm" /></td>
             <td class="py-2.5"><div class="skel h-4 w-10 ml-auto rounded-sm" /></td>
           </tr>
@@ -197,6 +209,14 @@ function selectRow(row: T) {
                 :title="moneyTooltip(r)"
               >
                 {{ r.money != null && r.money > 0 ? formatDamage(r.money) : '—' }}
+              </td>
+
+              <td
+                v-if="showPerK"
+                class="py-2.5 px-2 text-right data-mono text-xs text-amber-400/70"
+                :title="perKValue(r) != null ? `${formatFull(perKValue(r)!)}/1k dmg` : ''"
+              >
+                {{ perKValue(r) != null ? formatPerK(perKValue(r)!) : '—' }}
               </td>
 
               <td

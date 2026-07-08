@@ -70,9 +70,11 @@ const fmtTime = (iso: string | null) => {
             :key="p"
             class="seg-btn"
             :class="period === p ? 'seg-btn-active-just' : 'text-zinc-500 hover:text-zinc-300'"
+            :title="p === 'month' ? 'This month applies only to Justice. The Federation shows All time.' : undefined"
             @click="emit('update:period', p)"
           >
             {{ PERIOD_LABEL[p] }}
+            <span v-if="p === 'month'" class="text-[9px] text-zinc-600 ml-0.5">Justice</span>
           </button>
         </div>
 
@@ -121,9 +123,11 @@ const fmtTime = (iso: string | null) => {
           :key="p"
           class="seg-btn whitespace-nowrap"
           :class="period === p ? 'seg-btn-active-just' : 'text-zinc-500'"
+          :title="p === 'month' ? 'This month applies only to Justice. The Federation shows All time.' : undefined"
           @click="emit('update:period', p)"
         >
           {{ PERIOD_LABEL[p] }}
+          <span v-if="p === 'month'" class="text-[9px] text-zinc-600 ml-0.5">Justice</span>
         </button>
       </div>
     </div>

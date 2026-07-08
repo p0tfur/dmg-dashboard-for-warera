@@ -489,26 +489,38 @@ export async function getBattlesNeedingMoneyBackfill(limit: number): Promise<str
 
 /**
  * Finds battles that have money rankings synced but are missing loot entries
- * for at least one user with money > 0. Used to backfill the loot table for
- * battles processed before syncBattleLoot was added.
+ * for at least one Justice member with money > 0. Only Justice members are
+ * checked because loot is only ever fetched for them — filtering here avoids
+ * an infinite loop where non-Justice users (who never get loot entries) keep
+ * these battles permanently in the backfill queue.
  */
-export async function getBattlesNeedingLootBackfill(limit: number): Promise<string[]> {
+export async function getBattlesNeedingLootBackfill(
+  limit: number,
+  justiceUserIds?: string[],
+): Promise<string[]> {
   const result = await withWareraDb('getBattlesNeedingLootBackfill', async (db) => {
     // Use GROUP BY instead of DISTINCT so MySQL allows ORDER BY b.ended_at
     // (DISTINCT + ORDER BY non-selected column → ER_FIELD_IN_ORDER_NOT_SELECT).
-    const [rows] = await db.query<DbRow<{ battle_id: string }>[]>(
-      `SELECT r.battle_id
+    if (justiceUserIds != null && justiceUserIds.length === 0) return []
+    const placeholders = justiceUserIds?.length
+      ? justiceUserIds.map(() => '?').join(',')
+      : null
+    const sql = `SELECT r.battle_id
        FROM warera_battle_rankings r
        JOIN warera_battles b ON b.battle_id = r.battle_id
        WHERE r.entity_type = 'user' AND r.side = 'merged' AND r.money > 0
          AND b.money_synced_at IS NOT NULL
+         ${placeholders ? `AND r.entity_id IN (${placeholders})` : ''}
          AND NOT EXISTS (
            SELECT 1 FROM warera_battle_loot l
            WHERE l.battle_id = r.battle_id AND l.user_id = r.entity_id
          )
        GROUP BY r.battle_id
        ORDER BY MAX(COALESCE(b.ended_at, b.created_at)) DESC
-       LIMIT ?`, [limit])
+       LIMIT ?`
+    const params = [...(justiceUserIds ?? []), limit]
+    const [rows] = await db.query<DbRow<{ battle_id: string }>[]>(
+      sql, params)
     return rows.map((r) => r.battle_id)
   })
   return result ?? []
