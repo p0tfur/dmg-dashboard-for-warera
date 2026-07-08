@@ -29,12 +29,49 @@ const emit = defineEmits<{
 }>()
 
 const slots = useSlots()
-const sortDesc = ref(true)
 const expanded = ref(false)
+
+type SortKey = 'name' | 'damage' | 'money' | 'perK' | 'secondary' | 'share'
+const sortKey = ref<SortKey>('damage')
+const sortDir = ref<'asc' | 'desc'>('desc')
+
+function setSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortKey.value = key
+    // Name defaults to ascending, everything else to descending.
+    sortDir.value = key === 'name' ? 'asc' : 'desc'
+  }
+}
+
+function sortIndicator(key: SortKey): string {
+  if (sortKey.value !== key) return '↕'
+  return sortDir.value === 'desc' ? '↓' : '↑'
+}
+
+function sortValue(r: T, key: SortKey): string | number {
+  switch (key) {
+    case 'name': return r.name.toLowerCase()
+    case 'damage': return r.damage
+    case 'money': return r.money ?? -1
+    case 'perK': return perKValue(r) ?? -1
+    case 'secondary': return secondaryValue(r) ?? -1
+    case 'share': return r.share
+  }
+}
 
 const sortedAll = computed(() => {
   const arr = [...props.rows]
-  arr.sort((a, b) => (sortDesc.value ? b.damage - a.damage : a.damage - b.damage))
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  arr.sort((a, b) => {
+    const va = sortValue(a, sortKey.value)
+    const vb = sortValue(b, sortKey.value)
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return String(va).localeCompare(String(vb)) * dir
+    }
+    return (va - vb) * dir
+  })
   return arr.slice(0, props.limit)
 })
 
@@ -113,23 +150,46 @@ function selectRow(row: T) {
         <tr class="text-left text-[10px] uppercase tracking-[0.16em] text-zinc-500">
           <th class="py-2 pr-2 w-8 text-right font-semibold">#</th>
           <th v-if="showFlag || avatarKey" class="py-2 pr-2 w-10 font-semibold" />
-          <th class="py-2 pr-2 font-semibold">Name</th>
+          <th
+            class="py-2 pr-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('name')"
+          >
+            Name <span class="opacity-50">{{ sortIndicator('name') }}</span>
+          </th>
           <th
             class="py-2 px-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
-            @click="sortDesc = !sortDesc"
+            :class="sortKey === 'damage' ? primaryAccentText : ''"
+            @click="setSort('damage')"
           >
-            DMG <span class="opacity-50">↕</span>
+            DMG <span class="opacity-50">{{ sortIndicator('damage') }}</span>
           </th>
-          <th v-if="showMoney" class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80">
-            MONEY
+          <th
+            v-if="showMoney"
+            class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80 cursor-pointer select-none hover:text-amber-300"
+            @click="setSort('money')"
+          >
+            MONEY <span class="opacity-50">{{ sortIndicator('money') }}</span>
           </th>
-          <th v-if="showPerK" class="py-2 px-2 w-20 text-right font-semibold text-amber-400/80">
-            PER 1K
+          <th
+            v-if="showPerK"
+            class="py-2 px-2 w-20 text-right font-semibold text-amber-400/80 cursor-pointer select-none hover:text-amber-300"
+            @click="setSort('perK')"
+          >
+            PER 1K <span class="opacity-50">{{ sortIndicator('perK') }}</span>
           </th>
-          <th v-if="secondary" class="py-2 px-2 w-24 text-right font-semibold">
-            {{ secondary.label }}
+          <th
+            v-if="secondary"
+            class="py-2 px-2 w-24 text-right font-semibold cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('secondary')"
+          >
+            {{ secondary.label }} <span class="opacity-50">{{ sortIndicator('secondary') }}</span>
           </th>
-          <th class="py-2 pl-2 w-24 text-right font-semibold">Share</th>
+          <th
+            class="py-2 pl-2 w-24 text-right font-semibold cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('share')"
+          >
+            Share <span class="opacity-50">{{ sortIndicator('share') }}</span>
+          </th>
         </tr>
       </thead>
       <tbody>

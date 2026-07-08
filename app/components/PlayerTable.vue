@@ -19,10 +19,46 @@ const emit = defineEmits<{
 }>()
 
 const slots = useSlots()
-const sortDesc = ref(true)
+
+type SortKey = 'name' | 'country' | 'damage' | 'money' | 'help'
+const sortKey = ref<SortKey>('damage')
+const sortDir = ref<'asc' | 'desc'>('desc')
+
+function setSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortKey.value = key
+    sortDir.value = key === 'name' || key === 'country' ? 'asc' : 'desc'
+  }
+}
+
+function sortIndicator(key: SortKey): string {
+  if (sortKey.value !== key) return '↕'
+  return sortDir.value === 'desc' ? '↓' : '↑'
+}
+
+function sortValue(r: PlayerRow, key: SortKey): string | number {
+  switch (key) {
+    case 'name': return r.name.toLowerCase()
+    case 'country': return (r.countryName ?? '').toLowerCase()
+    case 'damage': return r.damage
+    case 'money': return r.money ?? -1
+    case 'help': return typeof r.help === 'number' ? r.help : -1
+  }
+}
+
 const sorted = computed(() => {
   const arr = [...props.rows]
-  arr.sort((a, b) => (sortDesc.value ? b.damage - a.damage : a.damage - b.damage))
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  arr.sort((a, b) => {
+    const va = sortValue(a, sortKey.value)
+    const vb = sortValue(b, sortKey.value)
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return String(va).localeCompare(String(vb)) * dir
+    }
+    return (va - vb) * dir
+  })
   return arr.slice(0, props.limit)
 })
 
@@ -67,18 +103,39 @@ function selectRow(row: PlayerRow) {
         <tr class="text-left text-[10px] uppercase tracking-[0.16em] text-zinc-500">
           <th class="py-2 pr-2 w-8 text-right font-semibold">#</th>
           <th class="py-2 pr-2 w-10 font-semibold" />
-          <th class="py-2 pr-2 font-semibold">Player</th>
-          <th class="py-2 px-2 font-semibold">Country</th>
+          <th
+            class="py-2 pr-2 font-semibold cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('name')"
+          >
+            Player <span class="opacity-50">{{ sortIndicator('name') }}</span>
+          </th>
+          <th
+            class="py-2 px-2 font-semibold cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('country')"
+          >
+            Country <span class="opacity-50">{{ sortIndicator('country') }}</span>
+          </th>
           <th
             class="py-2 px-2 font-semibold text-right cursor-pointer select-none hover:text-zinc-300"
-            @click="sortDesc = !sortDesc"
+            :class="sortKey === 'damage' ? 'text-just-glow' : ''"
+            @click="setSort('damage')"
           >
-            DMG <span class="opacity-50">↕</span>
+            DMG <span class="opacity-50">{{ sortIndicator('damage') }}</span>
           </th>
-          <th v-if="showMoney" class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80">
-            MONEY
+          <th
+            v-if="showMoney"
+            class="py-2 px-2 w-24 text-right font-semibold text-amber-400/80 cursor-pointer select-none hover:text-amber-300"
+            @click="setSort('money')"
+          >
+            MONEY <span class="opacity-50">{{ sortIndicator('money') }}</span>
           </th>
-          <th v-if="showHelp" class="py-2 pl-2 w-16 text-right font-semibold">Help</th>
+          <th
+            v-if="showHelp"
+            class="py-2 pl-2 w-16 text-right font-semibold cursor-pointer select-none hover:text-zinc-300"
+            @click="setSort('help')"
+          >
+            Help <span class="opacity-50">{{ sortIndicator('help') }}</span>
+          </th>
         </tr>
       </thead>
       <tbody>
