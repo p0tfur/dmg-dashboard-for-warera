@@ -17,6 +17,12 @@ WHERE c.name IN (
   'Papua New Guinea', 'Philippines', 'United Korea', 'Vietnam'
 );
 
+-- Palestine left The Federation on 2026-05-20
+UPDATE warera_alliance_membership_history h
+JOIN warera_countries c ON c.country_id = h.country_id
+SET h.left_at = '2026-05-20 00:00:00'
+WHERE h.alliance_id = @fed_id AND c.name = 'Palestine' AND h.joined_at = '2026-04-28 00:00:00';
+
 -- Eritrea (2026-05-29)
 INSERT IGNORE INTO warera_alliance_membership_history
   (alliance_id, country_id, joined_at)

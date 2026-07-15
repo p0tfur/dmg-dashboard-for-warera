@@ -655,9 +655,9 @@ export async function getDbFederation(period: Period): Promise<{
     // join date. This excludes pre-membership damage that the game's
     // country.total_damage would include.
     //
-    // NOTE: uses EARLIEST join_date as a simple cutoff. If a country left
-    // and later rejoined, damage during the gap is still included. This is
-    // a known limitation that requires multi-interval membership tracking.
+    // Both joined_at and left_at are enforced: damage is only counted
+    // while the country was an active member. If a country left and later
+    // rejoined, only the active intervals are included.
     const dateFilter = period === 'week'
       ? 'AND COALESCE(b.ended_at, b.created_at) >= NOW() - INTERVAL 7 DAY'
       : ''
@@ -678,6 +678,7 @@ export async function getDbFederation(period: Period): Promise<{
          ON mh.alliance_id = ? AND mh.country_id = r.entity_id
        WHERE r.entity_type = 'country' AND r.side = 'merged'
          AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+         AND (mh.left_at IS NULL OR COALESCE(b.ended_at, b.created_at) < mh.left_at)
          ${dateFilter}
        GROUP BY c.country_id, c.name, c.code
        HAVING SUM(r.damage) > 0
@@ -705,7 +706,8 @@ export async function getDbFederation(period: Period): Promise<{
        WHERE r.entity_type = 'mu' AND r.side = 'merged'
          AND (
            (mh.country_id IS NOT NULL
-             AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at)
+             AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+             AND (mh.left_at IS NULL OR COALESCE(b.ended_at, b.created_at) < mh.left_at))
            OR EXISTS (
              SELECT 1 FROM warera_tracked_entities te
              WHERE te.entity_type = 'extra_mu' AND te.entity_id = m.mu_id
@@ -984,9 +986,10 @@ export async function getDbFederationSupport(period: Period): Promise<{
            ON mh.alliance_id = ? AND mh.country_id = r.entity_id
          WHERE ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
             OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
-           AND r.entity_id IN (?)
-           AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
-           ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
+            AND r.entity_id IN (?)
+            AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+            AND (mh.left_at IS NULL OR COALESCE(b.ended_at, b.created_at) < mh.left_at)
+            ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
          GROUP BY r.entity_id
        ) agg ON agg.country_id = mc.country_id
        ORDER BY support_damage DESC`,
@@ -1090,6 +1093,7 @@ export async function getDbFederationSupportBreakdown(
            ON mh.alliance_id = ? AND mh.country_id = r.entity_id
          WHERE r.entity_id = ?
            AND COALESCE(b.ended_at, b.created_at) >= mh.joined_at
+           AND (mh.left_at IS NULL OR COALESCE(b.ended_at, b.created_at) < mh.left_at)
            AND ((b.defender_country_id IN (?) AND b.attacker_country_id NOT IN (?))
               OR (b.attacker_country_id IN (?) AND b.defender_country_id NOT IN (?)))
            ${since ? 'AND COALESCE(b.ended_at, b.created_at) >= ?' : ''}
